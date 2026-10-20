@@ -1,0 +1,36 @@
+[project]
+name = "pikanaut"
+version = "0.1.0"
+description = "Typed SQL generation from pydantic models — not an ORM"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pypika>=0.51.1",
+    "pydantic>=2.11",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "mypy>=1.11",
+    "pyright>=1.1",
+    "testcontainers[postgres]>=4.15",
+    "psycopg[binary]>=3.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+strict = true
+warn_unused_ignores = true
+files = ["src", "examples"]
+
+[tool.pyright]
+include = ["src", "examples"]
+typeCheckingMode = "strict"
