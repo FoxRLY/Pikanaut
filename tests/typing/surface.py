@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
-from typing import Any, assert_type
+from typing import Any
+
+from typing_extensions import assert_type
 
 from pikanaut import Client, client, columns
 from pikanaut.client import (

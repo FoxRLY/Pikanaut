@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Generic, Sequence, Self, TypeVar, overload
+from typing import Any, Generic, Sequence, TypeVar, overload
+
+from typing_extensions import Self
 
 from pydantic import BaseModel
 from pypika import Query, Table

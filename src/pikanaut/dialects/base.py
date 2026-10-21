@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from typing import Any, FrozenSet
 
 DEFAULT_MAX_SQL_BYTES = 1_000_000
@@ -22,13 +22,19 @@ class Limits:
     max_params: int | None = DEFAULT_MAX_PARAMS
 
 
-class Feature(StrEnum):
+class Feature(str, Enum):
     RETURNING = "returning"
     SCHEMA = "schema"
     UPSERT = "upsert"
     ILIKE = "ilike"
     FOR_UPDATE = "for_update"
     ARRAYS = "arrays"
+
+    # Строковый контракт StrEnum, включая Python 3.10.
+    __str__ = str.__str__
+
+    def __format__(self, format_spec: str) -> str:
+        return str.__format__(self, format_spec)
 
 
 class Dialect:
