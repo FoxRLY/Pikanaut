@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import Any, Generic, TypeVar, cast, get_args
+from functools import cache
+from typing import Any, Generic, TypeVar, get_args
 
 from pydantic import BaseModel
 from pypika import Table
@@ -120,12 +121,14 @@ class TableInfo:
         return _pypika_table(self.name, self.schema)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _pypika_table(name: str, schema: str | None) -> Table:
     return Table(name, schema=schema)
 
 
-def table(name: str, *, schema: str | None = None) -> Any:
+T = TypeVar("T", bound=BaseModel)
+
+def table(name: str, *, schema: str | None = None) -> Callable[[type[T]], type[T]]:
     """Декоратор модели: задаёт имя таблицы и схему, возвращает тот же класс."""
 
     def decorate(cls: type) -> type:
@@ -150,14 +153,9 @@ def _contains_typevar(annotation: Any) -> bool:
     return any(_contains_typevar(arg) for arg in get_args(annotation))
 
 
-_SCHEMA_CACHE: dict[type, TableInfo] = {}
-
-
+@cache
 def table_of(model: type) -> TableInfo:
     """Схема модели (кэшируется по классу)."""
-    cached = _SCHEMA_CACHE.get(model)
-    if cached is not None:
-        return cached
 
     declared = getattr(model, "__pikanaut_table__", None)
     if declared is None:
@@ -220,9 +218,7 @@ def table_of(model: type) -> TableInfo:
     if not fields:
         raise SchemaError(f"{model.__name__}: no columns — every field is Skip")
 
-    info = TableInfo(model=model, name=name, schema=schema, fields=tuple(fields))
-    _SCHEMA_CACHE[model] = info
-    return info
+    return TableInfo(model=model, name=name, schema=schema, fields=tuple(fields))
 
 
 class Columns(Generic[M]):
@@ -264,13 +260,9 @@ class Columns(Generic[M]):
         return f"Columns({self.model.__name__})"
 
 
-_COLUMNS_CACHE: dict[type, Columns[Any]] = {}
-
-
+@cache
 def columns(model: type[M]) -> Columns[M]:
-    """Пространство колонок модели."""
-    cached = _COLUMNS_CACHE.get(model)
-    if cached is None:
-        cached = Columns(model)
-        _COLUMNS_CACHE[model] = cached
-    return cast("Columns[M]", cached)
+    """Получить колонки модели для запросов."""
+
+    return Columns(model)
+

@@ -37,7 +37,7 @@ def _docker_ready() -> bool:
         return False
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def pg_container() -> Any:
     if not _docker_ready():
         if REQUIRE:

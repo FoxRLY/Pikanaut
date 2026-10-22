@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
+from typing_extensions import LiteralString
 
 from .dialects.base import Dialect, Feature, Limits
 from .errors import QueryTooLong, UnsupportedFeature
@@ -17,7 +18,7 @@ from .errors import QueryTooLong, UnsupportedFeature
 class Sql(NamedTuple):
     """Результат сборки: текст запроса, параметры, диалект."""
 
-    sql: str
+    sql: LiteralString
     params: list[Any]
     dialect: Dialect
 
@@ -145,4 +146,4 @@ def render(
                 ),
             )
 
-    return Sql(sql, binder.params, dialect)
+    return Sql(cast(LiteralString, sql), binder.params, dialect)
