@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from pikanaut import Col, QueryError, client, columns, ddl, or_, table
 from pikanaut.dialects import SQLITE
 
+
 @table("users")
 class User(BaseModel):
     id: Annotated[int, Col(pk=True)]
@@ -49,7 +50,9 @@ def main() -> None:
 
     # --- LIKE и производные
     print("LIKE:        ", db.select(U.id).where(U.email.like("%@corp.com")).build())
-    print("contains:    ", db.select(U.id).where(U.email.contains("corp")).build().params)
+    print(
+        "contains:    ", db.select(U.id).where(U.email.contains("corp")).build().params
+    )
 
     # --- композиция: and_/or_/not_ без операторов приоритета
     safe = or_(U.age > 60, U.age < 18)

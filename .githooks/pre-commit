@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+if ! command -v uv >/dev/null 2>&1; then
+    printf '%s\n' 'pre-commit: uv is required to run uv format' >&2
+    exit 1
+fi
+
+tmpdir=$(mktemp -d "${TMPDIR:-$repo_root/.git}/pikanaut-pre-commit.XXXXXX")
+before="$tmpdir/before"
+after="$tmpdir/after"
+trap 'rm -rf "$tmpdir"' EXIT
+
+git diff --no-ext-diff --binary -- . >"$before"
+uv format --preview-features format-command
+git diff --no-ext-diff --binary -- . >"$after"
+
+if ! cmp -s "$before" "$after"; then
+    printf '%s\n' 'pre-commit: uv format changed files; review, stage the changes, and commit again' >&2
+    exit 1
+fi

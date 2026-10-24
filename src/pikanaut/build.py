@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import Any, NamedTuple, cast
+from collections.abc import Sequence
+from typing import NamedTuple, Protocol, cast
 from typing_extensions import LiteralString
 
 from .dialects.base import Dialect, Feature, Limits
@@ -19,7 +20,7 @@ class Sql(NamedTuple):
     """Результат сборки: текст запроса, параметры, диалект."""
 
     sql: LiteralString
-    params: list[Any]
+    params: list[object]
     dialect: Dialect
 
 
@@ -35,7 +36,7 @@ class Binder:
     def __init__(self, dialect: Dialect, limits: Limits | None = None) -> None:
         self.dialect = dialect
         self.limits = limits if limits is not None else dialect.limits
-        self.params: list[Any] = []
+        self.params: list[object] = []
         self._n = 0
 
     def _take(self, count: int) -> int:
@@ -59,13 +60,13 @@ class Binder:
         self._n += count
         return self._n
 
-    def bind(self, value: Any) -> str:
+    def bind(self, value: object) -> str:
         """Значение → params, наружу плейсхолдер (``?`` / ``$1`` / ``%s``)."""
         index = self._take(1)
         self.params.append(self.dialect.adapt(value))
         return self.dialect.placeholder(index)
 
-    def bind_array(self, values: list[Any]) -> str:
+    def bind_array(self, values: Sequence[object]) -> str:
         """Список значений как один параметр (``= ANY($1)``)."""
         index = self._take(1)
         self.params.append([self.dialect.adapt(v) for v in values])
@@ -81,7 +82,7 @@ class RenderContext:
         self.dialect = dialect
         self.binder = binder
 
-    def bind(self, value: Any) -> str:
+    def bind(self, value: object) -> str:
         return self.binder.bind(value)
 
     def require(self, feature: Feature, hint: str = "") -> None:
@@ -99,8 +100,14 @@ def current() -> RenderContext:
     return ctx
 
 
+class SqlQuery(Protocol):
+    """Рендеру нужен только get_sql с явно переданным символом кавычек."""
+
+    def get_sql(self, *, quote_char: str) -> str: ...
+
+
 def render(
-    query: Any,
+    query: SqlQuery,
     dialect: Dialect,
     limits: Limits,
     *,
@@ -123,7 +130,9 @@ def render(
         _current.reset(token)
 
     if returning:
-        quoted = ",".join(f"{dialect.quote_char}{c}{dialect.quote_char}" for c in returning)
+        quoted = ",".join(
+            f"{dialect.quote_char}{c}{dialect.quote_char}" for c in returning
+        )
         sql = f"{sql} RETURNING {quoted}"
 
     max_bytes = limits.max_sql_bytes
@@ -146,4 +155,5 @@ def render(
                 ),
             )
 
-    return Sql(cast(LiteralString, sql), binder.params, dialect)
+    # Pyright различает LiteralString и str; mypy пока считает cast избыточным.
+    return Sql(cast(LiteralString, sql), binder.params, dialect)  # type: ignore[redundant-cast]

@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from .build import Sql
 from .client import Client, client
-from .errors import PikanautError, QueryError, QueryTooLong, SchemaError, UnsupportedFeature
+from .errors import (
+    PikanautError,
+    QueryError,
+    QueryTooLong,
+    SchemaError,
+    UnsupportedFeature,
+)
 from .expr import (
     Column,
     Cond,

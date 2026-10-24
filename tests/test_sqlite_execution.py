@@ -17,6 +17,7 @@ from pikanaut import client, columns, ddl
 from pikanaut.dialects import SQLITE
 from tests.models import Event, Note, User
 
+
 @pytest.fixture
 def conn():
     """Схема создаётся тем же DDL-генератором, что и в примерах: без ручного SQL."""
@@ -58,7 +59,11 @@ def test_every_statement_is_accepted_by_sqlite(conn) -> None:
                 uid=__import__("uuid").UUID("12345678-1234-5678-1234-567812345678"),
             )
         ).build(),
-        db.select(U.id, U.email).where(U.age > 18).order_by(U.id.desc()).limit(10).build(),
+        db.select(U.id, U.email)
+        .where(U.age > 18)
+        .order_by(U.id.desc())
+        .limit(10)
+        .build(),
         db.select(U.id).where(U.age.in_([1, 2, 3])).build(),
         db.select(U.id).where(U.age == None).build(),  # noqa: E711
         db.select(U.id).offset(20).build(),
@@ -88,7 +93,9 @@ def test_is_null_returns_the_null_row(conn) -> None:
     assert conn.execute(null_statement.sql, null_statement.params).fetchall() == [(1,)]
 
     adult_statement = db.select(U.id).where(U.age > 18).build()
-    assert conn.execute(adult_statement.sql, adult_statement.params).fetchall() == [(2,)]
+    assert conn.execute(adult_statement.sql, adult_statement.params).fetchall() == [
+        (2,)
+    ]
 
 
 def test_returning_gives_back_the_generated_id(conn) -> None:
@@ -107,7 +114,11 @@ def test_in_list_and_offset_execute(conn) -> None:
         conn.execute(statement.sql, statement.params)
 
     in_statement = db.select(N.text).where(N.id.in_([1, 2, 3])).build()
-    assert conn.execute(in_statement.sql, in_statement.params).fetchall() == [("a",), ("b",), ("c",)]
+    assert conn.execute(in_statement.sql, in_statement.params).fetchall() == [
+        ("a",),
+        ("b",),
+        ("c",),
+    ]
 
     offset_statement = db.select(N.text).order_by(N.id.asc()).offset(1).build()
     assert conn.execute(offset_statement.sql, offset_statement.params).fetchall() == [

@@ -36,5 +36,8 @@ def test_mypy_expectations() -> None:
 @pytest.mark.skipif(shutil.which("node") is None, reason="pyright требует node")
 def test_pyright_expectations() -> None:
     pytest.importorskip("pyright")
-    result = _run(sys.executable, "-m", "pyright", TARGET)
+    # В tox проверяем зависимости именно текущего окружения, не системного Python.
+    result = _run(
+        sys.executable, "-m", "pyright", "--pythonpath", sys.executable, TARGET
+    )
     assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from pikanaut import Col, QueryError, client, columns, ddl, table
 from pikanaut.dialects import SQLITE
 
+
 @table("notes")
 class Note(BaseModel):
     id: Annotated[int | None, Col(pk=True)] = None
@@ -42,7 +43,9 @@ def main() -> None:
     print("  ->", conn.execute(select.sql, select.params).fetchall())
 
     # --- UPDATE: set() принимает имена полей модели, а не колонок
-    update = db.update(Note).set(text="купить хлеб и молоко").where(N.id == note_id).build()
+    update = (
+        db.update(Note).set(text="купить хлеб и молоко").where(N.id == note_id).build()
+    )
     print("UPDATE:", update.sql, update.params)
     conn.execute(update.sql, update.params)
 

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, FrozenSet
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..build import Binder
 
 DEFAULT_MAX_SQL_BYTES = 1_000_000
 DEFAULT_MAX_PARAMS = 10_000
@@ -41,7 +45,7 @@ class Dialect:
     """База: то, что обязано различаться между диалектами."""
 
     name: str = "base"
-    features: FrozenSet[Feature] = frozenset()
+    features: frozenset[Feature] = frozenset()
     quote_char: str = '"'
     limits: Limits = Limits()
     engine_max_sql_bytes: int | None = None
@@ -54,14 +58,14 @@ class Dialect:
     def placeholder(self, index: int) -> str:
         raise NotImplementedError
 
-    def adapt(self, value: Any) -> Any:
+    def adapt(self, value: object) -> object:
         raise NotImplementedError
 
     def in_list(
         self,
         column_sql: str,
-        binder: Any,
-        values: list[Any],
+        binder: Binder,
+        values: Sequence[object],
         negate: bool = False,
     ) -> str:
         """``IN (?,?,?)`` по умолчанию; диалекты с массивами переопределяют."""

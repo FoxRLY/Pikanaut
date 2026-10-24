@@ -14,9 +14,11 @@ ILIKE), принимаются при рендере через ``build.current(
 from __future__ import annotations
 
 from functools import reduce
+from collections.abc import Iterable, Sequence
 from typing import Any, Generic, TypeVar
+from typing_extensions import LiteralString
 
-from pypika import Table, functions as fn
+from pypika import Order as PypikaOrder, Table, functions as fn
 from pypika.terms import ComplexCriterion, Field, Not, Term
 
 from .build import current
@@ -29,7 +31,7 @@ T = TypeVar("T")
 class Bound(Term):
     """Значение, которое станет параметром при рендере."""
 
-    def __init__(self, value: Any) -> None:
+    def __init__(self, value: object) -> None:
         super().__init__()
         self.value = value
 
@@ -51,7 +53,7 @@ class _Paren(Term):
 class _InList(Term):
     """``IN (?,?,?)`` или ``= ANY($1)`` — решает диалект."""
 
-    def __init__(self, column: Term, values: list[Any], invert: bool) -> None:
+    def __init__(self, column: Term, values: Sequence[object], invert: bool) -> None:
         super().__init__()
         self.column = column
         self.values = values
@@ -120,7 +122,7 @@ class Cond:
         return f"Cond({self.criterion})"
 
 
-def _require_conds(conds: tuple[Any, ...], name: str) -> None:
+def _require_conds(conds: tuple[object, ...], name: str) -> None:
     if not conds:
         raise QueryError(f"{name}() requires at least one condition")
     for cond in conds:
@@ -138,7 +140,7 @@ def or_(*conds: Cond) -> Cond:
     return reduce(lambda a, b: a | b, conds)
 
 
-def not_(cond: Any) -> Cond:
+def not_(cond: object) -> Cond:
     if not isinstance(cond, Cond):
         raise QueryError(f"not_() expects Cond, got {type(cond).__name__}")
     return ~cond
@@ -154,9 +156,7 @@ class Order:
         self.ascending = ascending
 
     @staticmethod
-    def direction(ascending: bool) -> Any:
-        from pypika import Order as PypikaOrder
-
+    def direction(ascending: bool) -> PypikaOrder:
         return PypikaOrder.asc if ascending else PypikaOrder.desc
 
 
@@ -184,9 +184,8 @@ class Column(Generic[T]):
     def __repr__(self) -> str:
         return f"Column({self.name!r})"
 
-
     # сравнения
-    def __eq__(self, other: Any) -> Cond:  # type: ignore[override]
+    def __eq__(self, other: object) -> Cond:  # type: ignore[override]
         if other is None:
             if not self.nullable:
                 raise TypeError(
@@ -196,7 +195,7 @@ class Column(Generic[T]):
             return Cond(self.term.isnull())
         return Cond(self.term == Bound(other))
 
-    def __ne__(self, other: Any) -> Cond:  # type: ignore[override]
+    def __ne__(self, other: object) -> Cond:  # type: ignore[override]
         if other is None:
             if not self.nullable:
                 raise TypeError(
@@ -206,16 +205,16 @@ class Column(Generic[T]):
             return Cond(self.term.isnotnull())
         return Cond(self.term != Bound(other))
 
-    def __gt__(self, other: Any) -> Cond:
+    def __gt__(self, other: object) -> Cond:
         return Cond(self.term > Bound(other))
 
-    def __ge__(self, other: Any) -> Cond:
+    def __ge__(self, other: object) -> Cond:
         return Cond(self.term >= Bound(other))
 
-    def __lt__(self, other: Any) -> Cond:
+    def __lt__(self, other: object) -> Cond:
         return Cond(self.term < Bound(other))
 
-    def __le__(self, other: Any) -> Cond:
+    def __le__(self, other: object) -> Cond:
         return Cond(self.term <= Bound(other))
 
     # предикаты
@@ -225,19 +224,21 @@ class Column(Generic[T]):
     def is_not_null(self) -> Cond:
         return Cond(self.term.isnotnull())
 
-    def in_(self, values: Any) -> Cond:
+    def in_(self, values: Iterable[object]) -> Cond:
         items = list(values)
         if not items:
             raise QueryError(
-                "empty IN list", hint="an empty IN can never match — skip the clause instead"
+                "empty IN list",
+                hint="an empty IN can never match — skip the clause instead",
             )
         return Cond(_InList(self.term, items, invert=False))
 
-    def not_in(self, values: Any) -> Cond:
+    def not_in(self, values: Iterable[object]) -> Cond:
         items = list(values)
         if not items:
             raise QueryError(
-                "empty IN list", hint="an empty NOT IN matches everything — skip the clause instead"
+                "empty IN list",
+                hint="an empty NOT IN matches everything — skip the clause instead",
             )
         return Cond(_InList(self.term, items, invert=True))
 
@@ -264,7 +265,7 @@ class Column(Generic[T]):
         return Order(self.term, ascending=True)
 
     # арифметика
-    def _arith(self, other: Any, op: str) -> Column[Any]:
+    def _arith(self, other: object, op: str) -> Column[Any]:
         right = other.term if isinstance(other, Column) else Bound(other)
         if op == "add":
             term = self.term + right
@@ -276,16 +277,16 @@ class Column(Generic[T]):
             term = self.term / right
         return _column(term, self.name, table=self.table)
 
-    def __add__(self, other: Any) -> Column[Any]:
+    def __add__(self, other: object) -> Column[Any]:
         return self._arith(other, "add")
 
-    def __sub__(self, other: Any) -> Column[Any]:
+    def __sub__(self, other: object) -> Column[Any]:
         return self._arith(other, "sub")
 
-    def __mul__(self, other: Any) -> Column[Any]:
+    def __mul__(self, other: object) -> Column[Any]:
         return self._arith(other, "mul")
 
-    def __truediv__(self, other: Any) -> Column[Any]:
+    def __truediv__(self, other: object) -> Column[Any]:
         return self._arith(other, "div")
 
 
@@ -298,13 +299,15 @@ def _column(
     return column
 
 
-def _arg(column: Column[Any]) -> Term:
+def _arg(column: Column[T]) -> Term:
     return column.term
 
 
 def count(column: Column[Any] | None = None) -> Column[int]:
     term = fn.Count("*") if column is None else fn.Count(_arg(column))
-    return _column(term, "count", nullable=False, table=None if column is None else column.table)
+    return _column(
+        term, "count", nullable=False, table=None if column is None else column.table
+    )
 
 
 def sum(column: Column[T]) -> Column[T]:
@@ -323,7 +326,7 @@ def min(column: Column[T]) -> Column[T]:
     return _column(fn.Min(_arg(column)), "min", table=column.table)
 
 
-def coalesce(*values: Any) -> Column[Any]:
+def coalesce(*values: object) -> Column[Any]:
     args = [v.term if isinstance(v, Column) else Bound(v) for v in values]
     table = next((v.table for v in values if isinstance(v, Column)), None)
     return _column(fn.Coalesce(*args), "coalesce", table=table)  # type: ignore[no-untyped-call]
@@ -337,6 +340,6 @@ def upper(column: Column[str]) -> Column[str]:
     return _column(fn.Upper(_arg(column)), "upper", table=column.table)
 
 
-def raw(sql: str) -> Column[Any]:
-    """Escape hatch для того, что не покрыто API."""
+def raw(sql: LiteralString) -> Column[Any]:
+    """Escape hatch для статического SQL, который не покрыт API."""
     return _column(_Raw(sql), sql)

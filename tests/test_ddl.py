@@ -45,7 +45,7 @@ class PublicUser(BaseModel):
 class Flag(BaseModel):
     id: Annotated[int | None, Col(pk=True)] = None
     is_active: Annotated[bool, Col(default=True)]
-    label: Annotated[str | None, Col(default='none')]
+    label: Annotated[str | None, Col(default="none")]
 
 
 @table("q")
@@ -57,13 +57,24 @@ class Quoted(BaseModel):
 @table("weird")
 class Weird(BaseModel):
     id: Annotated[int, Col(pk=True)]
-    payload: complex                      # pydantic умеет complex, SQL-типа у нас для него нет
+    payload: complex  # pydantic умеет complex, SQL-типа у нас для него нет
 
 
 @table("t" * 60)
 class Long(BaseModel):
     id: Annotated[int, Col(pk=True)]
     email: Annotated[str, Col(unique=True)]
+
+
+@table('odd"table')
+class OddIdentifier(BaseModel):
+    id: Annotated[int, Col(pk=True)]
+    value: Annotated[str, Col('odd"column')]
+
+
+@table("custom_type")
+class CustomType(BaseModel):
+    value: Annotated[complex, Col(type="VECTOR(3)")]
 
 
 def index_of(statements, column: str):
@@ -151,16 +162,41 @@ def test_schema_unsupported_on_sqlite() -> None:
 
 def test_drop() -> None:
     assert ddl.drop(Note, dialect=SQLITE).sql == 'DROP TABLE IF EXISTS "notes"'
-    assert ddl.drop(PublicUser, dialect=POSTGRES).sql == 'DROP TABLE IF EXISTS "public"."users"'
+    assert (
+        ddl.drop(PublicUser, dialect=POSTGRES).sql
+        == 'DROP TABLE IF EXISTS "public"."users"'
+    )
 
 
-def test_long_names_are_truncated_to_63() -> None:
-    (statement,) = ddl.create(Long, dialect=POSTGRES)
-    fragments = statement.sql.split("CONSTRAINT ")[1:]
-    assert fragments, "констрейнты должны быть именованы"
-    for fragment in fragments:
-        name = fragment.split()[0].strip('"')
-        assert len(name) <= 63, name
+def test_identifiers_are_escaped_and_explicit_sql_type_is_trusted() -> None:
+    (statement,) = ddl.create(OddIdentifier, dialect=SQLITE)
+    assert statement.sql == (
+        'CREATE TABLE IF NOT EXISTS "odd""table" '
+        '("id" INTEGER NOT NULL,"odd""column" TEXT NOT NULL,'
+        'CONSTRAINT "pk_odd""table" PRIMARY KEY ("id"))'
+    )
+    conn = sqlite3.connect(":memory:")
+    conn.execute(statement.sql)
+    assert conn.execute('SELECT "odd""column" FROM "odd""table"').fetchall() == []
+
+    (custom,) = ddl.create(CustomType, dialect=SQLITE)
+    assert (
+        custom.sql
+        == 'CREATE TABLE IF NOT EXISTS "custom_type" ("value" VECTOR(3) NOT NULL)'
+    )
+
+
+def test_long_names_are_rejected_by_postgres() -> None:
+    with pytest.raises(
+        SchemaError, match="exceeds PostgreSQL's 63-character identifier limit"
+    ):
+        ddl.create(Long, dialect=POSTGRES)
+
+
+def test_sqlite_allows_long_generated_names() -> None:
+    statements = ddl.create(Long, dialect=SQLITE)
+    assert len(statements) == 1
+    assert "uq_" in statements[0].sql
 
 
 def test_sqlite_accepts_generated_schema() -> None:
@@ -190,7 +226,8 @@ def test_sqlite_enforces_unique_and_exposes_index() -> None:
 
     values = (1, "a@b.io", "t1", "10.50", "{}")
     conn.execute(
-        'INSERT INTO users ("id","email","tenant","amount","meta") VALUES (?,?,?,?,?)', values
+        'INSERT INTO users ("id","email","tenant","amount","meta") VALUES (?,?,?,?,?)',
+        values,
     )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
@@ -210,7 +247,9 @@ def test_decimal_kept_as_text_on_sqlite() -> None:
         'INSERT INTO users ("id","email","tenant","amount","meta") VALUES (?,?,?,?,?)',
         (1, "a@b.io", "t", "10.50", "{}"),
     )
-    value, kind = conn.execute('SELECT "amount", typeof("amount") FROM users').fetchone()
+    value, kind = conn.execute(
+        'SELECT "amount", typeof("amount") FROM users'
+    ).fetchone()
     assert (value, kind) == ("10.50", "text")
 
 

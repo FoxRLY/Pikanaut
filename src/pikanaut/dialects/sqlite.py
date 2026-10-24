@@ -10,13 +10,13 @@ import json
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+
 from uuid import UUID
 
 from .base import Dialect, Feature
 
 
-def _adapt_value(value: Any) -> Any:
+def _adapt_value(value: object) -> object:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, (datetime, date, time)):
@@ -41,7 +41,7 @@ class SQLite(Dialect):
     def placeholder(self, index: int) -> str:
         return "?"
 
-    def adapt(self, value: Any) -> Any:
+    def adapt(self, value: object) -> object:
         return _adapt_value(value)
 
 
@@ -56,7 +56,7 @@ class SQLite34(Dialect):
     def placeholder(self, index: int) -> str:
         return "?"
 
-    def adapt(self, value: Any) -> Any:
+    def adapt(self, value: object) -> object:
         return _adapt_value(value)
 
 

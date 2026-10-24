@@ -14,8 +14,20 @@ from tests.models import Note, User
 
 def test_fields_become_columns_in_model_order() -> None:
     info = table_of(User)
-    assert [f.name for f in info.fields] == ["id", "email", "full_name", "age", "created_at"]
-    assert [f.column for f in info.fields] == ["id", "user_email", "full_name", "age", "created_at"]
+    assert [f.name for f in info.fields] == [
+        "id",
+        "email",
+        "full_name",
+        "age",
+        "created_at",
+    ]
+    assert [f.column for f in info.fields] == [
+        "id",
+        "user_email",
+        "full_name",
+        "age",
+        "created_at",
+    ]
 
 
 def test_table_name_and_schema() -> None:

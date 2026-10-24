@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..build import Binder
 
 from .base import Dialect, Feature
 
@@ -25,15 +29,15 @@ class Postgres(Dialect):
     def placeholder(self, index: int) -> str:
         return f"${index}"
 
-    def adapt(self, value: Any) -> Any:
+    def adapt(self, value: object) -> object:
         """Драйвер psycopg разбирается с типами сам — библиотека ничего не трогает."""
         return value
 
     def in_list(
         self,
         column_sql: str,
-        binder: Any,
-        values: list[Any],
+        binder: Binder,
+        values: Sequence[object],
         negate: bool = False,
     ) -> str:
         operator = "<> ALL" if negate else "= ANY"

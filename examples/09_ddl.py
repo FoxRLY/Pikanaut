@@ -24,7 +24,7 @@ from pikanaut.dialects import POSTGRES, SQLITE
 
 @table("orders")
 class Order(BaseModel):
-    id: Annotated[int | None, Col(pk=True)] = None          # выдаёт база
+    id: Annotated[int | None, Col(pk=True)] = None  # выдаёт база
     customer: Annotated[str, Col(index=True)]
     email: Annotated[str, Col(unique=True)]
     amount: Decimal
@@ -35,7 +35,7 @@ class Order(BaseModel):
 @table("weird")
 class Weird(BaseModel):
     id: Annotated[int, Col(pk=True)]
-    payload: complex                                        # нет переносимого SQL-типа
+    payload: complex  # нет переносимого SQL-типа
 
 
 def main() -> None:

@@ -14,7 +14,10 @@ from tests.models import Note, User
 def test_select_with_where_order_limit(db, U) -> None:
     q = db.select(U.id, U.email).where(U.age > 18).order_by(U.id.desc()).limit(10)
     sql = q.build()
-    assert sql.sql == 'SELECT "id","user_email" FROM "users" WHERE "age">? ORDER BY "id" DESC LIMIT 10'
+    assert (
+        sql.sql
+        == 'SELECT "id","user_email" FROM "users" WHERE "age">? ORDER BY "id" DESC LIMIT 10'
+    )
     assert sql.params == [18]
 
 
@@ -87,11 +90,16 @@ def test_returning_absent_before_335(old_sqlite) -> None:
 
 
 def test_offset_without_limit_sqlite(db, U) -> None:
-    assert db.select(U.id).offset(20).build().sql == 'SELECT "id" FROM "users" LIMIT -1 OFFSET 20'
+    assert (
+        db.select(U.id).offset(20).build().sql
+        == 'SELECT "id" FROM "users" LIMIT -1 OFFSET 20'
+    )
 
 
 def test_offset_without_limit_postgres(pg, U) -> None:
-    assert pg.select(U.id).offset(20).build().sql == 'SELECT "id" FROM "users" OFFSET 20'
+    assert (
+        pg.select(U.id).offset(20).build().sql == 'SELECT "id" FROM "users" OFFSET 20'
+    )
 
 
 def test_in_expands_qmark_on_sqlite(db, U) -> None:

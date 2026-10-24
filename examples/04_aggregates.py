@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from pikanaut import Col, avg, client, columns, count, ddl, table, sum as total
 from pikanaut.dialects import SQLITE
 
+
 @table("orders")
 class Order(BaseModel):
     id: Annotated[int, Col(pk=True)]
@@ -40,7 +41,9 @@ def main() -> None:
     print("GROUP BY:", grouped.sql)
     print("params:  ", grouped.params)
 
-    page = db.select(O.id, O.amount).order_by(O.amount.desc()).limit(2).offset(1).build()
+    page = (
+        db.select(O.id, O.amount).order_by(O.amount.desc()).limit(2).offset(1).build()
+    )
     print("\npage:    ", page.sql)
 
     tail = db.select(O.id).offset(2).build()
@@ -58,9 +61,9 @@ def main() -> None:
     for row in conn.execute(grouped.sql, grouped.params):
         print("  ", row)
 
-    print("\nсредний чек:", conn.execute(
-        db.select(avg(O.amount)).build().sql
-    ).fetchone())
+    print(
+        "\nсредний чек:", conn.execute(db.select(avg(O.amount)).build().sql).fetchone()
+    )
 
 
 if __name__ == "__main__":

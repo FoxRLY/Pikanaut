@@ -37,13 +37,18 @@ def main() -> None:
     U = columns(User)
 
     # --- SQLite
-    sqlite_db = client(SQLITE)               # Client[SQLite]
-    print("sqlite:  ", sqlite_db.select(U.id, U.email).where(U.age.in_([18, 25])).build())
+    sqlite_db = client(SQLITE)  # Client[SQLite]
+    print(
+        "sqlite:  ", sqlite_db.select(U.id, U.email).where(U.age.in_([18, 25])).build()
+    )
     # INSERT ... RETURNING есть с 3.35
-    print("         ", sqlite_db.insert(User(id=1, email="a@b.io")).returning(U.id).build().sql)
+    print(
+        "         ",
+        sqlite_db.insert(User(id=1, email="a@b.io")).returning(U.id).build().sql,
+    )
 
     # --- Postgres
-    pg = client(POSTGRES)                    # Client[Postgres]
+    pg = client(POSTGRES)  # Client[Postgres]
     pg_query = pg.select(U.id, U.email).where(U.age.in_([18, 25])).build()
     print("postgres:", pg_query.sql)
     print("          params =", pg_query.params, " <- список ушёл одним параметром")

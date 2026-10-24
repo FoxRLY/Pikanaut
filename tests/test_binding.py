@@ -30,9 +30,9 @@ def test_sqlite_adapts_scalar_types(db) -> None:
     sql = db.insert(row).build()
     assert sql.params == [
         1,
-        1,                                  # bool → 0/1
-        "2026-10-20T12:00:00",              # datetime → ISO 8601
-        "10.50",                            # Decimal → str, без потери точности
+        1,  # bool → 0/1
+        "2026-10-20T12:00:00",  # datetime → ISO 8601
+        "10.50",  # Decimal → str, без потери точности
         "12345678-1234-5678-1234-567812345678",
     ]
 
@@ -42,8 +42,8 @@ def test_postgres_passes_types_through(pg) -> None:
     amount = Decimal("10.50")
     row = Event(id=1, is_active=True, at=at, amount=amount, uid=UUID(int=1))
     sql = pg.insert(row).build()
-    assert sql.params[1] is True        # bool остаётся bool
-    assert sql.params[2] is at          # datetime отдаём драйверу как есть
+    assert sql.params[1] is True  # bool остаётся bool
+    assert sql.params[2] is at  # datetime отдаём драйверу как есть
     assert sql.params[3] is amount
 
 

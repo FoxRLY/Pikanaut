@@ -93,12 +93,13 @@ db = client(SQLITE, limits=Limits(max_params=20_000))
 - SQL-default: `Col(default=...)` или `Col(default=ddl.NOW)`.
   Он не заменяет default в модели pydantic.
 - `Decimal` в SQLite хранится как TEXT. Неизвестный SQL-тип — `SchemaError`;
-  явный тип задаётся через `Col(type="...")`.
+  доверенный статический тип задаётся через `Col(type="...")`.
 - Лимиты по умолчанию: 10 000 параметров и 1 000 000 байт SQL (UTF-8).
   Превышение — `QueryTooLong` при `build()`, с полями `kind`, `length`, `limit`.
   `None` в соответствующем поле `Limits` отключает проверку.
 
-JOIN, upsert, подзапросы и миграции не реализованы. `raw()` — выход за пределы API.
+JOIN, upsert, подзапросы и миграции не реализованы. `raw()` — выход за пределы API;
+он принимает только `LiteralString` и предназначен для статических SQL-фрагментов.
 
 ## Разработка
 

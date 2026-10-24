@@ -32,9 +32,11 @@ class Note(BaseModel):
     id: Annotated[int | None, Col(pk=True)] = None
     text: str
 
+
 NoteTable = columns(Note)
 
 sqlgen = client(SQLITE)
+
 
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
@@ -44,6 +46,7 @@ def get_connection() -> sqlite3.Connection:
         conn.execute(statement.sql)
 
     return conn
+
 
 def insert_note(text: str, conn: sqlite3.Connection) -> Note:
     new_note = Note(text=text)
@@ -63,9 +66,7 @@ def insert_note(text: str, conn: sqlite3.Connection) -> Note:
 
 
 def select_first_note(conn: sqlite3.Connection) -> Note:
-    query = (sqlgen.select(NoteTable.id, NoteTable.text)
-             .limit(5)
-             .build())
+    query = sqlgen.select(NoteTable.id, NoteTable.text).limit(5).build()
 
     print(query)
 

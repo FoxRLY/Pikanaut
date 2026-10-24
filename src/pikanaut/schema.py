@@ -5,10 +5,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Generic, TypeVar, get_args
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast, get_args
+from typing_extensions import LiteralString
+
+if TYPE_CHECKING:
+    from .expr import Column
 
 from pydantic import BaseModel
 from pypika import Table
@@ -31,9 +35,13 @@ UNSET = _Unset()
 
 
 class Col:
-    """Метка колонки: имя, ключ, уникальность, индекс, SQL-тип, DEFAULT."""
+    """Метка колонки: имя, ключ, уникальность, индекс, SQL-тип, DEFAULT.
+
+    ``type`` — доверенный SQL-фрагмент, заданный разработчиком модели.
+    """
 
     __slots__ = ("name", "pk", "unique", "index", "default", "sql_type")
+    sql_type: LiteralString | None
 
     def __init__(
         self,
@@ -42,8 +50,8 @@ class Col:
         pk: bool = False,
         unique: bool = False,
         index: bool = False,
-        default: Any = UNSET,
-        type: str | None = None,
+        default: object = UNSET,
+        type: LiteralString | None = None,
     ) -> None:
         self.name = name
         self.pk = pk
@@ -85,23 +93,23 @@ Skip = _Skip()
 class Field:
     """Одна колонка таблицы, выведенная из поля модели."""
 
-    name: str            # имя поля в модели
-    column: str          # имя колонки в БД
-    annotation: Any      # тип поля (уже разрешённый)
-    required: bool       # поле обязательно при вставке
-    nullable: bool       # колонка допускает NULL
+    name: str  # имя поля в модели
+    column: str  # имя колонки в БД
+    annotation: object  # тип поля (уже разрешённый)
+    required: bool  # поле обязательно при вставке
+    nullable: bool  # колонка допускает NULL
     pk: bool
     unique: bool
     index: bool = False
-    default: Any = UNSET
-    sql_type: str | None = None
+    default: object = UNSET
+    sql_type: LiteralString | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class TableInfo:
     """Таблица, выведенная из модели."""
 
-    model: type
+    model: type[BaseModel]
     name: str
     schema: str | None = None
     fields: tuple[Field, ...] = ()
@@ -114,7 +122,9 @@ class TableInfo:
         for f in self.fields:
             if f.name == model_field:
                 return f
-        raise SchemaError(f"{self.model.__name__}: field {model_field!r} is not a column")
+        raise SchemaError(
+            f"{self.model.__name__}: field {model_field!r} is not a column"
+        )
 
     def pypika_table(self) -> Table:
         """Таблица pypika; одна и та же на всю модель, чтобы ссылки были идентичны."""
@@ -126,35 +136,45 @@ def _pypika_table(name: str, schema: str | None) -> Table:
     return Table(name, schema=schema)
 
 
+def _typed_model_cache(
+    function: Callable[[type[object]], TableInfo],
+) -> Callable[[type[object]], TableInfo]:
+    """Keep the typed model signature when wrapping it in ``cache``.
+
+    Runtime class objects are hashable, but mypy does not infer that from
+    ``type[object]`` when it sees the stdlib cache wrapper.
+    """
+    return cast(Callable[[type[object]], TableInfo], cache(function))
+
+
 T = TypeVar("T", bound=BaseModel)
+
 
 def table(name: str, *, schema: str | None = None) -> Callable[[type[T]], type[T]]:
     """Декоратор модели: задаёт имя таблицы и схему, возвращает тот же класс."""
 
     def decorate(cls: type) -> type:
         if not issubclass(cls, BaseModel):
-            raise SchemaError(
-                f"{cls.__name__}: @table ожидает pydantic.BaseModel"
-            )
+            raise SchemaError(f"{cls.__name__}: @table ожидает pydantic.BaseModel")
         setattr(cls, "__pikanaut_table__", (name, schema))
-        table_of(cls)          # схема проверяется на импорте, а не на первом запросе
+        table_of(cls)  # схема проверяется на импорте, а не на первом запросе
         return cls
 
     return decorate
 
 
-def _is_optional(annotation: Any) -> bool:
+def _is_optional(annotation: object) -> bool:
     return type(None) in get_args(annotation)
 
 
-def _contains_typevar(annotation: Any) -> bool:
+def _contains_typevar(annotation: object) -> bool:
     if isinstance(annotation, TypeVar):
         return True
     return any(_contains_typevar(arg) for arg in get_args(annotation))
 
 
-@cache
-def table_of(model: type) -> TableInfo:
+@_typed_model_cache
+def table_of(model: type[object]) -> TableInfo:
     """Схема модели (кэшируется по классу)."""
 
     declared = getattr(model, "__pikanaut_table__", None)
@@ -229,16 +249,17 @@ class Columns(Generic[M]):
     def __init__(self, model: type[M]) -> None:
         self.model = model
         self.info = table_of(model)
-        self._cache: dict[str, Any] = {}
+        self._cache: dict[str, Column[Any]] = {}
 
     def field(self, name: str) -> Field:
         return self.info.field(name)
 
-    def __getattr__(self, name: str) -> Any:
-        cache = object.__getattribute__(self, "_cache")
+    def __getattr__(self, name: str) -> Column[Any]:
+        # Имена и типы полей динамические, но объект колонки имеет известный API.
+        cache: dict[str, Column[Any]] = object.__getattribute__(self, "_cache")
         if name in cache:
             return cache[name]
-        info = object.__getattribute__(self, "info")
+        info: TableInfo = object.__getattribute__(self, "info")
         try:
             field = info.field(name)
         except SchemaError as exc:
@@ -252,7 +273,7 @@ class Columns(Generic[M]):
         cache[name] = column
         return column
 
-    def __iter__(self) -> Any:
+    def __iter__(self) -> Iterator[Column[Any]]:
         for field in self.info.fields:
             yield getattr(self, field.name)
 
@@ -265,4 +286,3 @@ def columns(model: type[M]) -> Columns[M]:
     """Получить колонки модели для запросов."""
 
     return Columns(model)
-

@@ -9,12 +9,11 @@ DDL (identity, типы) и нет column-level ограничений.
 
 from __future__ import annotations
 
-import hashlib
-import warnings
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
-from typing import Any, get_args, get_origin
+from typing import cast, get_args, get_origin
+from typing_extensions import LiteralString
 from uuid import UUID
 
 from .build import Sql
@@ -22,7 +21,7 @@ from .dialects.base import Dialect, Feature
 from .errors import SchemaError, UnsupportedFeature
 from .schema import UNSET, Field, M, TableInfo, table_of
 
-MAX_IDENTIFIER = 63          # предел Postgres; SQLite длину не ограничивает
+MAX_IDENTIFIER = 63  # предел Postgres; SQLite длину не ограничивает
 
 
 class _Now:
@@ -47,7 +46,7 @@ _TYPES: dict[str, tuple[str, str]] = {
     "date": ("TEXT", "DATE"),
     "time": ("TEXT", "TIME"),
     "uuid": ("TEXT", "UUID"),
-    "decimal": ("TEXT", "NUMERIC"),     # TEXT — чтобы не потерять точность (SPEC.md, 11)
+    "decimal": ("TEXT", "NUMERIC"),  # TEXT — чтобы не потерять точность (SPEC.md, 11)
     "json": ("TEXT", "JSONB"),
     "enum": ("TEXT", "TEXT"),
 }
@@ -68,15 +67,21 @@ def create(
     body = f"{columns},{constraints}" if constraints else columns
 
     prefix = "CREATE TABLE IF NOT EXISTS " if if_not_exists else "CREATE TABLE "
-    statements = [Sql(f"{prefix}{_table_sql(info, dialect)} ({body})", [], dialect)]
+    statements = [
+        Sql(
+            _generated_sql(f"{prefix}{_table_sql(info, dialect)} ({body})"), [], dialect
+        )
+    ]
 
     index_prefix = "CREATE INDEX IF NOT EXISTS " if if_not_exists else "CREATE INDEX "
     for field in info.fields:
         if field.index:
             statements.append(
                 Sql(
-                    f"{index_prefix}{_quote(_name('ix', info.name, field.column), dialect)} "
-                    f"ON {_table_sql(info, dialect)} ({_quote(field.column, dialect)})",
+                    _generated_sql(
+                        f"{index_prefix}{_quote(_name('ix', info.name, field.column, dialect=dialect), dialect)} "
+                        f"ON {_table_sql(info, dialect)} ({_quote(field.column, dialect)})"
+                    ),
                     [],
                     dialect,
                 )
@@ -89,7 +94,7 @@ def drop(model: type[M], *, dialect: Dialect, if_exists: bool = True) -> Sql:
     info = table_of(model)
     _require_dialect_support(info, dialect)
     prefix = "DROP TABLE IF EXISTS " if if_exists else "DROP TABLE "
-    return Sql(f"{prefix}{_table_sql(info, dialect)}", [], dialect)
+    return Sql(_generated_sql(f"{prefix}{_table_sql(info, dialect)}"), [], dialect)
 
 
 # --- рендер частей ---------------------------------------------------------
@@ -97,7 +102,16 @@ def drop(model: type[M], *, dialect: Dialect, if_exists: bool = True) -> Sql:
 
 def _quote(identifier: str, dialect: Dialect) -> str:
     quote = dialect.quote_char
-    return f"{quote}{identifier}{quote}"
+    return f"{quote}{identifier.replace(quote, quote + quote)}{quote}"
+
+
+def _generated_sql(sql: str) -> LiteralString:
+    """Mark audited DDL output as trusted SQL for strict driver APIs.
+
+    Identifiers are quoted, defaults are escaped, and ``Col(type=...)`` is an
+    explicit developer-supplied SQL fragment. Row values never enter this text.
+    """
+    return cast(LiteralString, sql)  # type: ignore[redundant-cast]
 
 
 def _table_sql(info: TableInfo, dialect: Dialect) -> str:
@@ -150,7 +164,7 @@ def _family(dialect: Dialect) -> str:
     return "sqlite" if dialect.name.startswith("sqlite") else "postgres"
 
 
-def _non_optional(annotation: Any) -> Any:
+def _non_optional(annotation: object) -> object:
     """`int | None` → `int`; всё остальное без изменений."""
     args = get_args(annotation)
     if args and type(None) in args:
@@ -183,19 +197,19 @@ def _constraints_sql(info: TableInfo, dialect: Dialect) -> str:
     if pk_fields and not inline_pk:
         columns = ",".join(_quote(field.column, dialect) for field in pk_fields)
         parts.append(
-            f"CONSTRAINT {_quote(_name('pk', info.name), dialect)} PRIMARY KEY ({columns})"
+            f"CONSTRAINT {_quote(_name('pk', info.name, dialect=dialect), dialect)} PRIMARY KEY ({columns})"
         )
 
     for field in info.fields:
         if field.unique:
             parts.append(
-                f"CONSTRAINT {_quote(_name('uq', info.name, field.column), dialect)} "
+                f"CONSTRAINT {_quote(_name('uq', info.name, field.column, dialect=dialect), dialect)} "
                 f"UNIQUE ({_quote(field.column, dialect)})"
             )
     return ",".join(parts)
 
 
-def _kind(annotation: Any) -> str:
+def _kind(annotation: object) -> str:
     annotation = _non_optional(annotation)
     origin = get_origin(annotation)
     if origin is not None:
@@ -220,7 +234,7 @@ def _kind(annotation: Any) -> str:
     return "unknown"
 
 
-def _default_sql(value: Any, dialect: Dialect) -> str:
+def _default_sql(value: object, dialect: Dialect) -> str:
     if value is NOW:
         return "CURRENT_TIMESTAMP"
     if value is None:
@@ -242,16 +256,12 @@ def _literal(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
-def _name(prefix: str, *parts: str) -> str:
-    """Детерминированное имя констрейнта, обрезанное до предела Postgres."""
+def _name(prefix: str, *parts: str, dialect: Dialect) -> str:
+    """Сформировать имя ограничения или индекса с проверкой лимита диалекта."""
     name = "_".join([prefix, *parts])
-    if len(name) <= MAX_IDENTIFIER:
-        return name
-    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
-    shortened = f"{name[: MAX_IDENTIFIER - 9]}_{digest}"
-    warnings.warn(
-        f"constraint name {name!r} is longer than {MAX_IDENTIFIER} chars and was "
-        f"shortened to {shortened!r}",
-        stacklevel=3,
-    )
-    return shortened
+    if _family(dialect) == "postgres" and len(name) > MAX_IDENTIFIER:
+        raise SchemaError(
+            f"generated identifier {name!r} exceeds PostgreSQL's "
+            f"{MAX_IDENTIFIER}-character identifier limit"
+        )
+    return name

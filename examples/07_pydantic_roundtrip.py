@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter
 from pikanaut import Col, client, columns, ddl, table
 from pikanaut.dialects import SQLITE
 
+
 @table("events")
 class Event(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -35,7 +36,9 @@ def main() -> None:
     for statement in ddl.create(Event, dialect=SQLITE):
         conn.execute(statement.sql)
 
-    statement = db.insert(Event(name="deploy", happened_at=datetime(2026, 10, 20, 9, 30))).build()
+    statement = db.insert(
+        Event(name="deploy", happened_at=datetime(2026, 10, 20, 9, 30))
+    ).build()
     print("INSERT:", statement.sql)
     print("params:", statement.params, "  <- datetime стал ISO-строкой для sqlite")
     conn.execute(statement.sql, statement.params)
