@@ -3,13 +3,11 @@
 Проверяется то, что sqlite-набор проверить не может: `$n`→`%s` у драйвера, identity,
 NUMERIC, JSONB, UUID, TIMESTAMPTZ, схема `public`, `= ANY(...)`, ILIKE.
 
-Без docker тесты пропускаются; в CI нужно `PIKANAUT_REQUIRE_POSTGRES=1`, чтобы отсутствие
-контейнера было падением, а не тихим skip.
+Для запуска этих тестов требуется доступный Docker и образ `postgres:17-alpine`.
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from datetime import datetime
 from decimal import Decimal
@@ -32,8 +30,6 @@ from psycopg.rows import (
 from pydantic import BaseModel
 from testcontainers.community.postgres import PostgresContainer
 
-REQUIRE = os.environ.get("PIKANAUT_REQUIRE_POSTGRES") == "1"
-
 
 def _docker_ready() -> bool:
     try:
@@ -48,9 +44,7 @@ def _docker_ready() -> bool:
 @pytest.fixture(scope="module")
 def pg_container() -> Iterator[PostgresContainer]:
     if not _docker_ready():
-        if REQUIRE:
-            pytest.fail("PIKANAUT_REQUIRE_POSTGRES=1, но docker недоступен")
-        pytest.skip("docker недоступен — Postgres-тесты пропущены")
+        pytest.fail("docker недоступен — Postgres-тесты требуют Docker")
 
     with PostgresContainer("postgres:17-alpine", driver="psycopg") as container:
         yield container

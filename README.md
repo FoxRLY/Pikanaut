@@ -110,17 +110,15 @@ uv run mypy
 uv run pyright
 uv run python examples/01_hello.py
 
-uv python install 3.10 3.11 3.12 3.13 3.14
+uv python install 3.10 3.11 3.12 3.13 3.14 3.15
 uv run tox                   # вся матрица
 uv run tox -e py310           # одна версия
-PIKANAUT_REQUIRE_POSTGRES=1 uv run tox
 ```
 
-102 теста; без Docker — 93 passed, 9 skipped. Postgres проверяется через
-`testcontainers` (`postgres:17-alpine`). `PIKANAUT_REQUIRE_POSTGRES=1` запрещает
-пропуск при недоступном Docker.
+104 теста; для Postgres требуется доступный Docker и образ `postgres:17-alpine`.
+Postgres проверяется через `testcontainers` и теперь не пропускается при недоступном Docker.
 
-Tox проверяет установку wheel, тесты, типизацию и девять примеров на Python 3.10–3.14.
+Tox проверяет установку wheel, тесты, типизацию и девять примеров на Python 3.10–3.15.
 `.python-version` задаёт 3.13 для разработки, mypy/pyright нацелены на 3.10.
 Зависимости tox берутся из dev-группы, без привязки к `uv.lock`.
 
