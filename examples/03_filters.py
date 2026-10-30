@@ -12,57 +12,59 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated
+import sys
+from pathlib import Path
 
-from pydantic import BaseModel
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pikanaut import Col, QueryError, client, columns, ddl, or_, table
+from examples.generated.models import User
+from examples.generated.tables import users
+from pikanaut import QueryError, client, ddl, or_
 from pikanaut.dialects import SQLITE
-
-
-@table("users")
-class User(BaseModel):
-    id: Annotated[int, Col(pk=True)]
-    email: str
-    age: int | None = None
 
 
 def main() -> None:
     db = client(SQLITE)
-    U = columns(User)
 
     # --- NULL: тип колонки решает, что значит == None
-    print("IS NULL:     ", db.select(U.id).where(U.age == None).build().sql)  # noqa: E711
+    print(
+        "IS NULL:     ",
+        db.select(users.id).where(users.age == None).build().sql,  # noqa: E711
+    )
 
     try:
-        _ = U.email == None  # noqa: E711  — email NOT NULL, сравнение с NULL бессмысленно
+        _ = users.email == None  # noqa: E711
     except TypeError as exc:
         print("NOT NULL == None ->", exc)
 
     # --- IN: одно значение = один параметр
-    in_query = db.select(U.id).where(U.age.in_([18, 25, 40])).build()
+    in_query = db.select(users.id).where(users.age.in_([18, 25, 40])).build()
     print("IN:          ", in_query.sql, in_query.params)
 
     try:
-        db.select(U.id).where(U.age.in_([])).build()
+        db.select(users.id).where(users.age.in_([])).build()
     except QueryError as exc:
         print("пустой IN ->", exc)
 
     # --- LIKE и производные
-    print("LIKE:        ", db.select(U.id).where(U.email.like("%@corp.com")).build())
     print(
-        "contains:    ", db.select(U.id).where(U.email.contains("corp")).build().params
+        "LIKE:        ",
+        db.select(users.id).where(users.email.like("%@corp.com")).build(),
+    )
+    print(
+        "contains:    ",
+        db.select(users.id).where(users.email.contains("corp")).build().params,
     )
 
     # --- композиция: and_/or_/not_ без операторов приоритета
-    safe = or_(U.age > 60, U.age < 18)
-    print("OR:          ", db.select(U.id).where(safe).build().sql)
+    safe = or_(users.age > 60, users.age < 18)
+    print("OR:          ", db.select(users.id).where(safe).build().sql)
 
     # (U.age > 18) & (U.age < 65) — скобки обязательны:
     # без них Python считает 1 & U.age и падает с TypeError ещё до SQL.
-    both = (U.age > 18) & (U.age < 65)
-    mixed = (both, U.email.like("%@corp.com"))
-    mixed_query = db.select(U.id).where(*mixed).build()
+    both = (users.age > 18) & (users.age < 65)
+    mixed = (both, users.email.like("%@corp.com"))
+    mixed_query = db.select(users.id).where(*mixed).build()
     print("AND + LIKE:  ", mixed_query.sql, mixed_query.params)
 
     # --- проверяем на настоящих данных

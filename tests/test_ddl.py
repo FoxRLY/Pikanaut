@@ -9,72 +9,64 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
 
 import pytest
-from pydantic import BaseModel
 
-from pikanaut import Col, SchemaError, UnsupportedFeature, ddl, table
+from pikanaut import (
+    DateTimeColumn,
+    Generated,
+    Identity,
+    IntColumn,
+    JsonColumn,
+    SchemaError,
+    StrColumn,
+    TableModel,
+    UnsupportedFeature,
+    ddl,
+    defaults,
+)
 from pikanaut.dialects import POSTGRES, SQLITE
 
 
-@table("notes")
-class Note(BaseModel):
-    id: Annotated[int | None, Col(pk=True)] = None
+class Note(TableModel, table="notes"):
+    id: int | Generated = IntColumn(pk=True, server_default=Identity())
     text: str
-    created_at: Annotated[datetime, Col(default=ddl.NOW)]
+    created_at: datetime | Generated = DateTimeColumn(server_default=defaults.NOW)
 
 
-@table("users")
-class User(BaseModel):
-    id: Annotated[int, Col(pk=True)]
-    email: Annotated[str, Col(unique=True)]
-    tenant: Annotated[str, Col(index=True)]
+class User(TableModel, table="users"):
+    id: int = IntColumn(pk=True)
+    email: str = StrColumn(unique=True)
+    tenant: str = StrColumn(index=True)
     amount: Decimal
-    meta: dict[str, int]
+    meta: dict[str, int] = JsonColumn()
     age: int | None = None
 
 
-@table("users", schema="public")
-class PublicUser(BaseModel):
-    id: Annotated[int, Col(pk=True)]
+class PublicUser(TableModel, table="users", schema="public"):
+    id: int = IntColumn(pk=True)
     email: str
 
 
-@table("flags")
-class Flag(BaseModel):
-    id: Annotated[int | None, Col(pk=True)] = None
-    is_active: Annotated[bool, Col(default=True)]
-    label: Annotated[str | None, Col(default="none")]
+class Flag(TableModel, table="flags"):
+    id: int | Generated = IntColumn(pk=True, server_default=Identity())
+    is_active: bool = True
+    label: str | None = "none"
 
 
-@table("q")
-class Quoted(BaseModel):
-    id: Annotated[int, Col(pk=True)]
-    text: Annotated[str, Col(default="it's")]
+class Quoted(TableModel, table="q"):
+    id: int = IntColumn(pk=True)
+    text: str = "it's"
 
 
-@table("weird")
-class Weird(BaseModel):
-    id: Annotated[int, Col(pk=True)]
-    payload: complex  # pydantic умеет complex, SQL-типа у нас для него нет
+class Long(TableModel, table="t" * 60):
+    id: int = IntColumn(pk=True)
+    email: str = StrColumn(unique=True)
 
 
-@table("t" * 60)
-class Long(BaseModel):
-    id: Annotated[int, Col(pk=True)]
-    email: Annotated[str, Col(unique=True)]
-
-
-@table('odd"table')
-class OddIdentifier(BaseModel):
-    id: Annotated[int, Col(pk=True)]
-    value: Annotated[str, Col('odd"column')]
-
-
-@table("custom_type")
-class CustomType(BaseModel):
-    value: Annotated[complex, Col(type="VECTOR(3)")]
+class OddIdentifier(TableModel, table='odd"table'):
+    id: int = IntColumn(pk=True)
+    value: str = StrColumn(name='odd"column')
 
 
 def index_of(statements, column: str):
@@ -88,7 +80,8 @@ def test_sqlite_table_with_rowid_identity() -> None:
     statements = ddl.create(Note, dialect=SQLITE)
     assert [s.sql for s in statements] == [
         'CREATE TABLE IF NOT EXISTS "notes" ("id" INTEGER PRIMARY KEY,'
-        '"text" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)'
+        '"text" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT '
+        "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
     ]
     assert statements[0].params == []
 
@@ -112,7 +105,7 @@ def test_sqlite_types_and_constraints() -> None:
         '"email" TEXT NOT NULL,'
         '"tenant" TEXT NOT NULL,'
         '"amount" TEXT NOT NULL,'
-        '"meta" TEXT NOT NULL,'
+        '"meta" TEXT NOT NULL CHECK (json_valid("meta")),'
         '"age" INTEGER,'
         'CONSTRAINT "pk_users" PRIMARY KEY ("id"),'
         'CONSTRAINT "uq_users_email" UNIQUE ("email"))'
@@ -150,9 +143,12 @@ def test_string_default_is_escaped() -> None:
     assert "DEFAULT 'it''s'" in statement.sql
 
 
-def test_unknown_type_requires_explicit_sql_type() -> None:
-    with pytest.raises(SchemaError, match=r"Col\(type"):
-        ddl.create(Weird, dialect=SQLITE)
+def test_unknown_type_is_rejected() -> None:
+    with pytest.raises(SchemaError, match="complex"):
+
+        class Weird(TableModel, table="weird"):
+            id: int = IntColumn(pk=True)
+            payload: complex
 
 
 def test_schema_unsupported_on_sqlite() -> None:
@@ -168,7 +164,7 @@ def test_drop() -> None:
     )
 
 
-def test_identifiers_are_escaped_and_explicit_sql_type_is_trusted() -> None:
+def test_identifiers_are_escaped() -> None:
     (statement,) = ddl.create(OddIdentifier, dialect=SQLITE)
     assert statement.sql == (
         'CREATE TABLE IF NOT EXISTS "odd""table" '
@@ -178,12 +174,6 @@ def test_identifiers_are_escaped_and_explicit_sql_type_is_trusted() -> None:
     conn = sqlite3.connect(":memory:")
     conn.execute(statement.sql)
     assert conn.execute('SELECT "odd""column" FROM "odd""table"').fetchall() == []
-
-    (custom,) = ddl.create(CustomType, dialect=SQLITE)
-    assert (
-        custom.sql
-        == 'CREATE TABLE IF NOT EXISTS "custom_type" ("value" VECTOR(3) NOT NULL)'
-    )
 
 
 def test_long_names_are_rejected_by_postgres() -> None:
@@ -258,3 +248,118 @@ def test_repeated_create_is_idempotent() -> None:
     for _ in range(2):
         for statement in ddl.create(Note, dialect=SQLITE):
             conn.execute(statement.sql)
+
+# Consolidated typed-table coverage.
+import sqlite3
+from datetime import datetime
+from decimal import Decimal
+from typing import Literal
+
+import pytest
+
+from pikanaut import ddl
+from pikanaut.defaults import GENERATED, NOW, Generated, Identity, postgres
+from pikanaut.dialects import POSTGRES, SQLITE
+from pikanaut.errors import UnsupportedFeature
+from pikanaut.fields import (
+    DateTimeColumn,
+    DecimalColumn,
+    IntColumn,
+    JsonColumn,
+    StrColumn,
+)
+from pikanaut.schema import TableModel
+
+
+class Record(TableModel, table='odd"records'):
+    id: int | Generated = IntColumn(pk=True, server_default=Identity())
+    name: str = StrColumn(name='display"name', min_length=2, max_length=20, unique=True)
+    score: int = IntColumn(
+        greater_than_or_equal=0, less_than=100, index=True, default=4
+    )
+    state: Literal["new", "done"] = "new"
+    payload: dict[str, Decimal] = JsonColumn(default={"amount": Decimal("1.50")})
+    created_at: datetime | Generated = DateTimeColumn(server_default=NOW)
+
+
+def test_sqlite_ddl_quotes_names_enforces_checks_and_executes() -> None:
+    statements = ddl.create(Record, dialect=SQLITE)
+    sql = statements[0].sql
+
+    assert sql.startswith('CREATE TABLE IF NOT EXISTS "odd""records" (')
+    assert '"id" INTEGER PRIMARY KEY' in sql
+    assert '"display""name" TEXT NOT NULL' in sql
+    assert 'length("display""name") >= 2' in sql
+    assert 'length("display""name") <= 20' in sql
+    assert '"score" INTEGER NOT NULL DEFAULT 4' in sql
+    assert '"score" >= 0' in sql and '"score" < 100' in sql
+    assert "\"state\" TEXT NOT NULL DEFAULT 'new'" in sql
+    assert "\"state\" IN ('new','done')" in sql
+    assert 'json_valid("payload")' in sql
+    assert 'DEFAULT \'{"amount":"1.50"}\'' in sql
+    assert "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')" in sql
+    assert statements[1].sql == (
+        'CREATE INDEX IF NOT EXISTS "ix_odd""records_score" ON "odd""records" ("score")'
+    )
+
+    connection = sqlite3.connect(":memory:")
+    for statement in statements:
+        connection.execute(statement.sql)
+    connection.execute(
+        'INSERT INTO "odd""records" ("display""name") VALUES (?)', ("ok",)
+    )
+    row = connection.execute(
+        'SELECT "score","state","payload","created_at" FROM "odd""records"'
+    ).fetchone()
+    assert row[:3] == (4, "new", '{"amount":"1.50"}')
+    assert row[3].endswith("Z")
+
+
+def test_postgres_ddl_uses_native_types_identity_and_constraints() -> None:
+    statement = ddl.create(Record, dialect=POSTGRES)[0]
+    sql = statement.sql
+
+    assert '"id" INTEGER GENERATED BY DEFAULT AS IDENTITY' in sql
+    assert '"display""name" VARCHAR(20) NOT NULL' in sql
+    assert 'length("display""name") >= 2' in sql
+    assert 'length("display""name") <= 20' not in sql
+    assert '"payload" JSONB NOT NULL DEFAULT \'{"amount":"1.50"}\'::jsonb' in sql
+    assert '"created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP' in sql
+    assert 'CONSTRAINT "pk_odd""records" PRIMARY KEY ("id")' in sql
+    assert 'CONSTRAINT "uq_odd""records_display""name" UNIQUE ("display""name")' in sql
+
+
+def test_identity_and_dialect_specific_defaults_reject_unsupported_sqlite() -> None:
+    class Always(TableModel, table="always"):
+        id: int | Generated = IntColumn(
+            pk=True, server_default=Identity(generated="ALWAYS")
+        )
+
+    class NativePostgres(TableModel, table="native_postgres"):
+        created: datetime | Generated = DateTimeColumn(
+            server_default=postgres.CURRENT_TIMESTAMP
+        )
+
+    with pytest.raises(UnsupportedFeature, match="identity.*ALWAYS"):
+        ddl.create(Always, dialect=SQLITE)
+    with pytest.raises(UnsupportedFeature, match="postgres server default"):
+        ddl.create(NativePostgres, dialect=SQLITE)
+
+
+def test_sqlite_decimal_bounds_are_rejected_instead_of_text_comparison() -> None:
+    class Price(TableModel, table="prices"):
+        amount: Decimal = DecimalColumn(greater_than=Decimal("0"))
+
+    with pytest.raises(UnsupportedFeature, match="Decimal bounds"):
+        ddl.create(Price, dialect=SQLITE)
+
+
+def test_drop_uses_real_quoting_and_schema_capability() -> None:
+    class Public(TableModel, table="items", schema="public"):
+        id: int = IntColumn(pk=True)
+
+    assert ddl.drop(Public, dialect=POSTGRES).sql == (
+        'DROP TABLE IF EXISTS "public"."items"'
+    )
+    with pytest.raises(UnsupportedFeature, match="schema"):
+        ddl.drop(Public, dialect=SQLITE)

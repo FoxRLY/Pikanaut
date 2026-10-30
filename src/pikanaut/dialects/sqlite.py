@@ -6,17 +6,19 @@
 
 from __future__ import annotations
 
-import json
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
-
 from uuid import UUID
+
+from pydantic_core import to_json
 
 from .base import Dialect, Feature
 
 
-def _adapt_value(value: object) -> object:
+def _adapt_value(value: object, *, json: bool = False) -> object:
+    if json:
+        return to_json(value).decode("utf-8")
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, (datetime, date, time)):
@@ -27,8 +29,6 @@ def _adapt_value(value: object) -> object:
         return str(value)
     if isinstance(value, Enum):
         return value.value
-    if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value, default=str)
     return value
 
 
@@ -41,8 +41,8 @@ class SQLite(Dialect):
     def placeholder(self, index: int) -> str:
         return "?"
 
-    def adapt(self, value: object) -> object:
-        return _adapt_value(value)
+    def adapt(self, value: object, *, json: bool = False) -> object:
+        return _adapt_value(value, json=json)
 
 
 class SQLite34(Dialect):
@@ -56,8 +56,8 @@ class SQLite34(Dialect):
     def placeholder(self, index: int) -> str:
         return "?"
 
-    def adapt(self, value: object) -> object:
-        return _adapt_value(value)
+    def adapt(self, value: object, *, json: bool = False) -> object:
+        return _adapt_value(value, json=json)
 
 
 SQLITE = SQLite()

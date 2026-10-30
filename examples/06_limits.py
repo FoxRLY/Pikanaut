@@ -15,40 +15,40 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated
+import sys
+from pathlib import Path
 
-from pydantic import BaseModel
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pikanaut import Col, QueryTooLong, client, columns, ddl, table
+from examples.generated.models import Note
+from examples.generated.tables import notes
+from pikanaut import QueryTooLong, client, ddl
 from pikanaut.dialects import SQLITE, Limits
-
-
-@table("notes")
-class Note(BaseModel):
-    id: Annotated[int | None, Col(pk=True)] = None
-    text: str
 
 
 def main() -> None:
     db = client(SQLITE)
-    N = columns(Note)
 
     # --- 1. слишком много параметров
     try:
-        db.select(N.id).where(N.id.in_(range(10_001))).build()
+        db.select(notes.id).where(notes.id.in_(range(10_001))).build()
     except QueryTooLong as exc:
         print("params:", exc)
         print("  kind =", exc.kind, "| length =", exc.length, "| limit =", exc.limit)
 
     # --- 2. то же, но с поднятым лимитом
     wide = client(SQLITE, limits=Limits(max_params=20_000))
-    built = wide.select(N.id).where(N.id.in_(range(12_000))).build()
+    built = wide.select(notes.id).where(notes.id.in_(range(12_000))).build()
     print("\nс limits=20_000:", len(built.params), "параметров — собралось")
 
     # --- 3. лимит на длину текста
     tight = client(SQLITE, limits=Limits(max_sql_bytes=120, max_params=None))
     try:
-        tight.select(N.id, N.text).where(N.text.like("%" + "x" * 200)).build()
+        (
+            tight.select(notes.id, notes.text)
+            .where(notes.text.like("%" + "x" * 200))
+            .build()
+        )
     except QueryTooLong as exc:
         print("\nbytes: ", exc)
 
@@ -60,7 +60,7 @@ def main() -> None:
     rows = [Note(text=f"заметка {i}") for i in range(2_500)]
     chunk = 100  # 1 колонка × 100 строк = 100 параметров
     for start in range(0, len(rows), chunk):
-        statement = db.insert_many(rows[start : start + chunk]).build()
+        statement = db.insert_many(notes, rows[start : start + chunk]).build()
         conn.execute(statement.sql, statement.params)
     total = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     print(f"\nвставлено чанками по {chunk}: {total} строк")
@@ -69,7 +69,7 @@ def main() -> None:
     free = client(SQLITE, limits=Limits(max_sql_bytes=None, max_params=None))
     print(
         "без проверок:",
-        len(free.select(N.id).where(N.id.in_(range(15_000))).build().params),
+        len(free.select(notes.id).where(notes.id.in_(range(15_000))).build().params),
     )
 
 

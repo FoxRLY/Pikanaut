@@ -10,40 +10,43 @@ pikanaut не превращает строки в объекты — это р�
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
-from typing import Annotated
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pikanaut import Col, client, columns, ddl, table
+from pydantic import TypeAdapter
+
+from examples.generated.models import Event
+from examples.generated.tables import events
+from pikanaut import client, ddl
 from pikanaut.dialects import SQLITE
-
-
-@table("events")
-class Event(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: Annotated[int | None, Col(pk=True)] = None
-    name: str
-    happened_at: datetime
 
 
 def main() -> None:
     db = client(SQLITE)
-    E = columns(Event)
 
     conn = sqlite3.connect(":memory:")
     for statement in ddl.create(Event, dialect=SQLITE):
         conn.execute(statement.sql)
 
     statement = db.insert(
-        Event(name="deploy", happened_at=datetime(2026, 10, 20, 9, 30))
+        events,
+        Event(
+            name="deploy",
+            happened_at=datetime(2026, 10, 20, 9, 30, tzinfo=timezone.utc),
+        ),
     ).build()
     print("INSERT:", statement.sql)
     print("params:", statement.params, "  <- datetime стал ISO-строкой для sqlite")
     conn.execute(statement.sql, statement.params)
 
-    select = db.select(E.id, E.name, E.happened_at).order_by(E.id.asc()).build()
+    select = (
+        db.select(events.id, events.name, events.happened_at)
+        .order_by(events.id.asc())
+        .build()
+    )
     print("\nSELECT:", select.sql)
 
     cursor = conn.execute(select.sql, select.params)
@@ -52,8 +55,8 @@ def main() -> None:
 
     # Колонки -> модель. Валидация, дефолты и ошибки — целиком pydantic.
     adapter = TypeAdapter(Event)
-    events = [adapter.validate_python(dict(zip(names, row))) for row in rows]
-    for event in events:
+    hydrated_events = [adapter.validate_python(dict(zip(names, row))) for row in rows]
+    for event in hydrated_events:
         print("  ", event, "|", type(event.happened_at).__name__)
 
     # Если строка не подходит под модель — обычная pydantic-ошибка, а не молчаливый None.

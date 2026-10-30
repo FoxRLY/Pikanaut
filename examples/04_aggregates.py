@@ -12,41 +12,40 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated
+import sys
+from pathlib import Path
 
-from pydantic import BaseModel
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pikanaut import Col, avg, client, columns, count, ddl, table, sum as total
+from examples.generated.models import Order
+from examples.generated.tables import orders
+from pikanaut import avg, client, count, ddl, sum as total
 from pikanaut.dialects import SQLITE
-
-
-@table("orders")
-class Order(BaseModel):
-    id: Annotated[int, Col(pk=True)]
-    customer: str
-    amount: int
 
 
 def main() -> None:
     db = client(SQLITE)
-    O = columns(Order)
 
     grouped = (
-        db.select(O.customer, total(O.amount), count())
-        .group_by(O.customer)
-        .having(total(O.amount) > 100)
-        .order_by(O.customer.asc())
+        db.select(orders.customer, total(orders.amount), count())
+        .group_by(orders.customer)
+        .having(total(orders.amount) > 100)
+        .order_by(orders.customer.asc())
         .build()
     )
     print("GROUP BY:", grouped.sql)
     print("params:  ", grouped.params)
 
     page = (
-        db.select(O.id, O.amount).order_by(O.amount.desc()).limit(2).offset(1).build()
+        db.select(orders.id, orders.amount)
+        .order_by(orders.amount.desc())
+        .limit(2)
+        .offset(1)
+        .build()
     )
     print("\npage:    ", page.sql)
 
-    tail = db.select(O.id).offset(2).build()
+    tail = db.select(orders.id).offset(2).build()
     print("offset без limit:", tail.sql)
 
     conn = sqlite3.connect(":memory:")
@@ -62,7 +61,8 @@ def main() -> None:
         print("  ", row)
 
     print(
-        "\nсредний чек:", conn.execute(db.select(avg(O.amount)).build().sql).fetchone()
+        "\nсредний чек:",
+        conn.execute(db.select(avg(orders.amount)).build().sql).fetchone(),
     )
 
 

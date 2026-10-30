@@ -4,20 +4,18 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, PrivateAttr, computed_field
+from pydantic import PrivateAttr, computed_field
 
-from pikanaut import Col, Skip, table
+from pikanaut import Generated, Identity, IntColumn, StrColumn, TableModel
 
 
-@table("users")
-class User(BaseModel):
-    id: Annotated[int, Col(pk=True)]
-    email: Annotated[str, Col("user_email", unique=True)]
+class User(TableModel, table="users"):
+    id: int = IntColumn(pk=True)
+    email: str = StrColumn(name="user_email", unique=True)
     full_name: str
-    password_hash: Annotated[str, Skip]
+    password_hash: str
     age: int | None = None
     created_at: datetime
 
@@ -29,26 +27,29 @@ class User(BaseModel):
         return self.full_name.split()[0]
 
 
-@table("notes")
-class Note(BaseModel):
-    """PK генерируется базой, поэтому необязателен и null-able."""
+class Note(TableModel, table="notes"):
+    """PK генерируется базой и остаётся NOT NULL в схеме."""
 
-    id: Annotated[int | None, Col(pk=True)] = None
+    id: int | Generated = IntColumn(pk=True, server_default=Identity())
     text: str
 
 
-@table("users", schema="public")
-class PublicUser(BaseModel):
-    id: Annotated[int, Col(pk=True)]
+class PublicUser(TableModel, table="users", schema="public"):
+    id: int = IntColumn(pk=True)
     email: str
 
 
-@table("events")
-class Event(BaseModel):
+class Event(TableModel, table="events"):
     """Все типы, для которых нужен адаптер диалекта."""
 
-    id: Annotated[int, Col(pk=True)]
+    id: int = IntColumn(pk=True)
     is_active: bool
     at: datetime
     amount: Decimal
     uid: UUID
+
+
+class Product(TableModel, table="products"):
+    id: int = IntColumn(pk=True)
+    name: str
+    description: str

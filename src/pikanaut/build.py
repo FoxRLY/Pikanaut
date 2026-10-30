@@ -60,16 +60,16 @@ class Binder:
         self._n += count
         return self._n
 
-    def bind(self, value: object) -> str:
-        """Значение → params, наружу плейсхолдер (``?`` / ``$1`` / ``%s``)."""
+    def bind(self, value: object, *, json: bool = False) -> str:
+        """Value to params; return the dialect placeholder."""
         index = self._take(1)
-        self.params.append(self.dialect.adapt(value))
+        self.params.append(self.dialect.adapt(value, json=json))
         return self.dialect.placeholder(index)
 
-    def bind_array(self, values: Sequence[object]) -> str:
-        """Список значений как один параметр (``= ANY($1)``)."""
+    def bind_array(self, values: Sequence[object], *, json: bool = False) -> str:
+        """Bind a sequence as one array parameter."""
         index = self._take(1)
-        self.params.append([self.dialect.adapt(v) for v in values])
+        self.params.append([self.dialect.adapt(v, json=json) for v in values])
         return self.dialect.placeholder(index)
 
 
@@ -82,8 +82,8 @@ class RenderContext:
         self.dialect = dialect
         self.binder = binder
 
-    def bind(self, value: object) -> str:
-        return self.binder.bind(value)
+    def bind(self, value: object, *, json: bool = False) -> str:
+        return self.binder.bind(value, json=json)
 
     def require(self, feature: Feature, hint: str = "") -> None:
         if not self.dialect.has(feature):
@@ -119,7 +119,7 @@ def render(
         raise UnsupportedFeature(
             dialect.name,
             "schema",
-            "drop @table(schema=...) or use a dialect that supports schemas",
+            "remove schema= or use a dialect that supports schemas",
         )
 
     binder = Binder(dialect, limits)
@@ -131,7 +131,8 @@ def render(
 
     if returning:
         quoted = ",".join(
-            f"{dialect.quote_char}{c}{dialect.quote_char}" for c in returning
+            f"{dialect.quote_char}{column.replace(dialect.quote_char, dialect.quote_char * 2)}{dialect.quote_char}"
+            for column in returning
         )
         sql = f"{sql} RETURNING {quoted}"
 

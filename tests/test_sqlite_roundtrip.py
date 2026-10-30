@@ -6,8 +6,9 @@ import sqlite3
 
 import pytest
 
-from pikanaut import client, columns, ddl
+from pikanaut import client, ddl
 from pikanaut.dialects import SQLITE
+from tests.generated import notes
 from tests.models import Note
 
 
@@ -22,22 +23,20 @@ def conn():
 
 def test_insert_select_update_delete(conn) -> None:
     db = client(SQLITE)
-    N = columns(Note)
-
-    ins = db.insert(Note(text="привет")).build()
+    ins = db.insert(notes, Note(text="привет")).build()
     cursor = conn.execute(ins.sql, ins.params)
     new_id = cursor.lastrowid
 
-    sel = db.select(N.id, N.text).build()
+    sel = db.select(notes.id, notes.text).build()
     assert conn.execute(sel.sql, sel.params).fetchall() == [(new_id, "привет")]
 
-    upd = db.update(Note).set(text="пока").where(N.id == new_id).build()
+    upd = db.update(notes).set(text="пока").where(notes.id == new_id).build()
     conn.execute(upd.sql, upd.params)
 
-    sel_one = db.select(N.text).where(N.id == new_id).build()
+    sel_one = db.select(notes.text).where(notes.id == new_id).build()
     assert conn.execute(sel_one.sql, sel_one.params).fetchall() == [("пока",)]
 
-    dele = db.delete(Note).where(N.id == new_id).build()
+    dele = db.delete(notes).where(notes.id == new_id).build()
     conn.execute(dele.sql, dele.params)
     assert conn.execute(sel.sql, sel.params).fetchall() == []
 
@@ -46,7 +45,7 @@ def test_injection_attempt_is_stored_verbatim(conn) -> None:
     db = client(SQLITE)
     evil = "'; DROP TABLE notes--"
 
-    ins = db.insert(Note(text=evil)).build()
+    ins = db.insert(notes, Note(text=evil)).build()
     conn.execute(ins.sql, ins.params)
 
     assert "notes" in {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
@@ -55,6 +54,6 @@ def test_injection_attempt_is_stored_verbatim(conn) -> None:
 
 def test_returning_on_modern_sqlite(conn) -> None:
     db = client(SQLITE)
-    ins = db.insert(Note(text="x")).returning(columns(Note).id).build()
+    ins = db.insert(notes, Note(text="x")).returning(notes.id).build()
     row = conn.execute(ins.sql, ins.params).fetchone()
     assert row is not None and isinstance(row[0], int)

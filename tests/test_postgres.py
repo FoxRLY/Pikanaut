@@ -9,14 +9,16 @@ NUMERIC, JSONB, UUID, TIMESTAMPTZ, схема `public`, `= ANY(...)`, ILIKE.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
 import pytest
 
-from pikanaut import QueryError, client, columns, ddl
+from pikanaut import QueryError, TableModel, client, ddl
 from pikanaut.dialects import POSTGRES, POSTGRES_PSYCOPG
+from tests.generated import events, notes, users
+from tests.generated.public import users as public_users
 from tests.models import Event, Note, PublicUser, User
 
 pytest.importorskip("psycopg")
@@ -27,7 +29,6 @@ from psycopg import Connection
 from psycopg.rows import (
     TupleRow,
 )  # Драйвер задаёт динамический тип значений SQL-строки.
-from pydantic import BaseModel
 from testcontainers.community.postgres import PostgresContainer
 
 
@@ -71,20 +72,21 @@ def _user(uid: int = 1, *, age: int | None = None, email: str | None = None) -> 
         full_name="Ann Lee",
         password_hash="secret",
         age=age,
-        created_at=datetime(2026, 10, 20, 12, 0),
+        created_at=datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc),
     )
 
 
-def _create(conn: Connection[TupleRow], *models: type[BaseModel]) -> None:
+def _create(conn: Connection[TupleRow], *models: type[TableModel]) -> None:
     for model in models:
         for statement in ddl.create(model, dialect=POSTGRES_PSYCOPG):
             conn.execute(statement.sql)
 
 
 def test_placeholder_styles_differ_only_in_spelling() -> None:
-    U = columns(User)
-    asyncpg_sql = client(POSTGRES).select(U.id).where(U.age > 18).build().sql
-    psycopg_sql = client(POSTGRES_PSYCOPG).select(U.id).where(U.age > 18).build().sql
+    asyncpg_sql = client(POSTGRES).select(users.id).where(users.age > 18).build().sql
+    psycopg_sql = (
+        client(POSTGRES_PSYCOPG).select(users.id).where(users.age > 18).build().sql
+    )
     assert asyncpg_sql == 'SELECT "id" FROM "users" WHERE "age">$1'
     assert psycopg_sql == 'SELECT "id" FROM "users" WHERE "age">%s'
 
@@ -99,7 +101,14 @@ def test_ddl_is_accepted_by_server(pg: Connection[TupleRow]) -> None:
             "WHERE table_schema = 'public' AND table_name = 'users'"
         )
     }
-    assert {"id", "user_email", "full_name", "age", "created_at"} <= columns_found
+    assert {
+        "id",
+        "user_email",
+        "full_name",
+        "password_hash",
+        "age",
+        "created_at",
+    } <= columns_found
 
     types: dict[str, str] = dict(
         pg.execute(
@@ -114,11 +123,9 @@ def test_ddl_is_accepted_by_server(pg: Connection[TupleRow]) -> None:
 def test_identity_and_returning(pg: Connection[TupleRow]) -> None:
     _create(pg, Note)
     db = client(POSTGRES_PSYCOPG)
-    N = columns(Note)
-
     ids: list[int] = []
     for text in ("a", "b"):
-        statement = db.insert(Note(text=text)).returning(N.id).build()
+        statement = db.insert(notes, Note(text=text)).returning(notes.id).build()
         row = pg.execute(statement.sql, statement.params).fetchone()
         assert row is not None
         ids.append(row[0])
@@ -128,35 +135,37 @@ def test_identity_and_returning(pg: Connection[TupleRow]) -> None:
 def test_in_any_ilike_and_offset(pg: Connection[TupleRow]) -> None:
     _create(pg, User)
     db = client(POSTGRES_PSYCOPG)
-    U = columns(User)
 
     for user in (
         _user(1, age=30, email="ann@corp.com"),
         _user(2, age=17),
         _user(3, age=None),
     ):
-        statement = db.insert(user).build()
+        statement = db.insert(users, user).build()
         pg.execute(statement.sql, statement.params)
 
     in_statement = (
-        db.select(U.id).where(U.age.in_([30, 17])).order_by(U.id.asc()).build()
+        db.select(users.id)
+        .where(users.age.in_([30, 17]))
+        .order_by(users.id.asc())
+        .build()
     )
     assert [row[0] for row in pg.execute(in_statement.sql, in_statement.params)] == [
         1,
         2,
     ]
 
-    nul_statement = db.select(U.id).where(U.age == None).build()  # noqa: E711
+    nul_statement = db.select(users.id).where(users.age == None).build()  # noqa: E711
     assert [row[0] for row in pg.execute(nul_statement.sql, nul_statement.params)] == [
         3
     ]
 
-    like_statement = db.select(U.id).where(U.email.ilike("%CORP%")).build()
+    like_statement = db.select(users.id).where(users.email.ilike("%CORP%")).build()
     assert [
         row[0] for row in pg.execute(like_statement.sql, like_statement.params)
     ] == [1]
 
-    offset_statement = db.select(U.id).order_by(U.id.asc()).offset(1).build()
+    offset_statement = db.select(users.id).order_by(users.id.asc()).offset(1).build()
     assert [
         row[0] for row in pg.execute(offset_statement.sql, offset_statement.params)
     ] == [2, 3]
@@ -169,14 +178,14 @@ def test_types_come_back_typed(pg: Connection[TupleRow]) -> None:
     event = Event(
         id=1,
         is_active=True,
-        at=datetime(2026, 10, 20, 12, 0),
+        at=datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc),
         amount=Decimal("10.50"),
         uid=UUID("12345678-1234-5678-1234-567812345678"),
     )
-    statement = db.insert(event).build()
+    statement = db.insert(events, event).build()
     pg.execute(statement.sql, statement.params)
 
-    selected = db.select(Event).build()
+    selected = db.select(events).build()
     row = pg.execute(selected.sql, selected.params).fetchone()
     assert row is not None
     assert row[0] == 1
@@ -189,10 +198,9 @@ def test_types_come_back_typed(pg: Connection[TupleRow]) -> None:
 def test_value_is_never_interpolated(pg: Connection[TupleRow]) -> None:
     _create(pg, User)
     db = client(POSTGRES_PSYCOPG)
-    U = columns(User)
 
     evil = "'; DROP TABLE users--"
-    statement = db.select(U.id).where(U.email == evil).build()
+    statement = db.select(users.id).where(users.email == evil).build()
     assert evil not in statement.sql
     assert pg.execute(statement.sql, statement.params).fetchall() == []
 
@@ -204,7 +212,7 @@ def test_value_is_never_interpolated(pg: Connection[TupleRow]) -> None:
 def test_guards_stop_before_the_server(pg: Connection[TupleRow]) -> None:
     _create(pg, User)
     with pytest.raises(QueryError):
-        client(POSTGRES_PSYCOPG).delete(User).build()
+        client(POSTGRES_PSYCOPG).delete(users).build()
     row = pg.execute('SELECT COUNT(*) FROM "users"').fetchone()
     assert row is not None
     assert row[0] == 0
@@ -225,13 +233,12 @@ def test_drop_removes_table(pg: Connection[TupleRow]) -> None:
 def test_schema_qualified_table(pg: Connection[TupleRow]) -> None:
     _create(pg, PublicUser)
     db = client(POSTGRES_PSYCOPG)
-    P = columns(PublicUser)
 
-    statement = db.insert(PublicUser(id=1, email="a@b.io")).build()
+    statement = db.insert(public_users, PublicUser(id=1, email="a@b.io")).build()
     assert '"public"."users"' in statement.sql
     pg.execute(statement.sql, statement.params)
 
-    selected = db.select(P.id).build()
+    selected = db.select(public_users.id).build()
     assert pg.execute(selected.sql, selected.params).fetchall() == [(1,)]
 
 

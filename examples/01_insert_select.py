@@ -1,6 +1,6 @@
 """01 — самый маленький пример: модель → SQL.
 
-Запуск: uv run python examples/01_hello.py
+Запуск: uv run python examples/01_insert_select.py
 
 Главная мысль: pikanaut не ходит в базу. На выходе всегда (sql, params), а исполнение —
 дело драйвера. Здесь драйвер — stdlib sqlite3.
@@ -9,11 +9,14 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated
+# import sys
+# from pathlib import Path
 
-from pydantic import BaseModel
+# sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pikanaut import Col, client, columns, ddl, table
+from .generated.models import Note
+from .generated.tables import notes
+from pikanaut import GENERATED, client, ddl
 from pikanaut.dialects import SQLITE
 
 
@@ -26,14 +29,6 @@ def main() -> None:
     print("Вставленный объект: ", inserted_note)
     print("Прочитанный объект: ", selected_note)
 
-
-@table("notes")
-class Note(BaseModel):
-    id: Annotated[int | None, Col(pk=True)] = None
-    text: str
-
-
-NoteTable = columns(Note)
 
 sqlgen = client(SQLITE)
 
@@ -51,7 +46,7 @@ def get_connection() -> sqlite3.Connection:
 def insert_note(text: str, conn: sqlite3.Connection) -> Note:
     new_note = Note(text=text)
 
-    query = sqlgen.insert(new_note).returning(NoteTable.id).build()
+    query = sqlgen.insert(notes, new_note).returning(notes.id).build()
 
     print(query)
 
@@ -59,20 +54,20 @@ def insert_note(text: str, conn: sqlite3.Connection) -> Note:
         new_note.id = row["id"]
         break
 
-    if new_note.id is None:
+    if new_note.id is GENERATED:
         raise Exception("huh")
 
     return new_note
 
 
 def select_first_note(conn: sqlite3.Connection) -> Note:
-    query = sqlgen.select(NoteTable.id, NoteTable.text).limit(5).build()
+    query = sqlgen.select(notes.id, notes.text).limit(5).build()
 
     print(query)
 
     row = conn.execute(query.sql, query.params).fetchone()
     if row:
-        return Note(id=row["id"], text=row["text"])
+        return Note.model_validate(dict(row))
     else:
         raise Exception("Huh")
 

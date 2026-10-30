@@ -7,7 +7,8 @@ from pypika import Query, Table
 
 from pikanaut.build import Binder, RenderContext, Sql, render
 from pikanaut.dialects import POSTGRES, SQLITE, Limits
-from pikanaut import Col, client, ddl, raw
+from pikanaut import client, ddl, raw
+from tests.generated import users
 from tests.models import User
 
 
@@ -39,15 +40,10 @@ def render_contract() -> None:
 
 
 def generated_sql_contract() -> None:
-    assert_type(client(SQLITE).select(User).build().sql, LiteralString)
+    assert_type(client(SQLITE).select(users).build().sql, LiteralString)
     assert_type(ddl.create(User, dialect=SQLITE)[0].sql, LiteralString)
     assert_type(ddl.drop(User, dialect=SQLITE).sql, LiteralString)
 
 
-def sql_type_contract() -> None:
-    assert_type(Col(type="VECTOR(3)").sql_type, LiteralString | None)
-
-
 def trusted_sql_inputs_contract(sql_text: str) -> None:
     raw(sql_text)  # pyright: ignore[reportArgumentType]
-    Col(type=sql_text)  # pyright: ignore[reportArgumentType]

@@ -7,8 +7,12 @@ requires-python = ">=3.10"
 dependencies = [
     "pypika>=0.51.1",
     "pydantic>=2.11",
-    "typing-extensions>=4.2",
+    "tomli>=2.0; python_version < '3.11'",
+    "typing-extensions>=4.12",
 ]
+
+[project.scripts]
+pikanaut = "pikanaut.generate:main"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]

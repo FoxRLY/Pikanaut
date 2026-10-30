@@ -1,30 +1,50 @@
-"""Схема модели: Annotated-метки, декоратор @table, извлечение полей.
-
-Всё, что здесь происходит, работает на этапе импорта модуля с моделью (SPEC.md, раздел 2).
-"""
+"""Normalized table metadata extracted from :class:`TableModel` classes."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field as dataclass_field
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from functools import cache
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast, get_args
-from typing_extensions import LiteralString
+from types import UnionType
+from typing import (
+    Any,
+    Literal,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
+from uuid import UUID
 
-if TYPE_CHECKING:
-    from .expr import Column
-
-from pydantic import BaseModel
+import annotated_types
+from pydantic import BaseModel, TypeAdapter
+from pydantic.fields import FieldInfo
+from pydantic_core import PydanticSerializationError, SchemaValidator, core_schema
+from pydantic_core.core_schema import CoreSchema
+from pydantic_core import PydanticUndefined
 from pypika import Table
 
+from .defaults import (
+    GENERATED,
+    NOW,
+    TODAY,
+    Generated,
+    Identity,
+    ServerDefault,
+    is_server_descriptor,
+)
 from .errors import SchemaError
+from .fields import ColumnConstraints, ColumnSpec
+from .model import TableModel
 
-M = TypeVar("M")
+M = TypeVar("M", bound=BaseModel)
 
 
 class _Unset:
-    """Отсутствие дефолта (отличать от `default=None`)."""
-
     __slots__ = ()
 
     def __repr__(self) -> str:
@@ -34,81 +54,38 @@ class _Unset:
 UNSET = _Unset()
 
 
-class Col:
-    """Метка колонки: имя, ключ, уникальность, индекс, SQL-тип, DEFAULT.
-
-    ``type`` — доверенный SQL-фрагмент, заданный разработчиком модели.
-    """
-
-    __slots__ = ("name", "pk", "unique", "index", "default", "sql_type")
-    sql_type: LiteralString | None
-
-    def __init__(
-        self,
-        name: str | None = None,
-        *,
-        pk: bool = False,
-        unique: bool = False,
-        index: bool = False,
-        default: object = UNSET,
-        type: LiteralString | None = None,
-    ) -> None:
-        self.name = name
-        self.pk = pk
-        self.unique = unique
-        self.index = index
-        self.default = default
-        self.sql_type = type
-
-    def __repr__(self) -> str:
-        parts: list[str] = []
-        if self.name is not None:
-            parts.append(repr(self.name))
-        if self.pk:
-            parts.append("pk=True")
-        if self.unique:
-            parts.append("unique=True")
-        if self.index:
-            parts.append("index=True")
-        if self.default is not UNSET:
-            parts.append(f"default={self.default!r}")
-        if self.sql_type is not None:
-            parts.append(f"type={self.sql_type!r}")
-        return f"Col({', '.join(parts)})"
-
-
-class _Skip:
-    """Метка «поле не является колонкой»."""
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return "Skip"
-
-
-Skip = _Skip()
-
-
 @dataclass(frozen=True, slots=True)
 class Field:
-    """Одна колонка таблицы, выведенная из поля модели."""
+    """One normalized stored column.
 
-    name: str  # имя поля в модели
-    column: str  # имя колонки в БД
-    annotation: object  # тип поля (уже разрешённый)
-    required: bool  # поле обязательно при вставке
-    nullable: bool  # колонка допускает NULL
+    ``annotation`` removes :class:`Generated` but deliberately retains ``None``.
+    Query builders can therefore distinguish SQL nullability while never treating
+    the pending-server-value marker as a bindable column value type.
+    """
+
+    name: str
+    column: str
+    annotation: object
+    required: bool
+    nullable: bool
     pk: bool
     unique: bool
     index: bool = False
     default: object = UNSET
-    sql_type: LiteralString | None = None
+    server_default: object = UNSET
+    default_factory: Callable[..., object] | None = None
+    sql_type: str | None = None
+    kind: str = "unknown"
+    constraints: ColumnConstraints = ColumnConstraints()
+    allowed_values: tuple[str | int, ...] = ()
+    timezone: bool | None = None
+    pydantic_field: FieldInfo = dataclass_field(
+        repr=False, compare=False, hash=False, default_factory=FieldInfo
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class TableInfo:
-    """Таблица, выведенная из модели."""
-
     model: type[BaseModel]
     name: str
     schema: str | None = None
@@ -116,18 +93,17 @@ class TableInfo:
 
     @property
     def columns(self) -> tuple[str, ...]:
-        return tuple(f.column for f in self.fields)
+        return tuple(item.column for item in self.fields)
 
     def field(self, model_field: str) -> Field:
-        for f in self.fields:
-            if f.name == model_field:
-                return f
+        for item in self.fields:
+            if item.name == model_field:
+                return item
         raise SchemaError(
             f"{self.model.__name__}: field {model_field!r} is not a column"
         )
 
     def pypika_table(self) -> Table:
-        """Таблица pypika; одна и та же на всю модель, чтобы ссылки были идентичны."""
         return _pypika_table(self.name, self.schema)
 
 
@@ -136,153 +112,323 @@ def _pypika_table(name: str, schema: str | None) -> Table:
     return Table(name, schema=schema)
 
 
-def _typed_model_cache(
-    function: Callable[[type[object]], TableInfo],
-) -> Callable[[type[object]], TableInfo]:
-    """Keep the typed model signature when wrapping it in ``cache``.
+def is_concrete_table(model: type[object]) -> bool:
+    """Return whether *model* declares its own table metadata.
 
-    Runtime class objects are hashable, but mypy does not infer that from
-    ``type[object]`` when it sees the stdlib cache wrapper.
+    Metadata inherited from a concrete parent never registers a second table.
     """
-    return cast(Callable[[type[object]], TableInfo], cache(function))
 
-
-T = TypeVar("T", bound=BaseModel)
-
-
-def table(name: str, *, schema: str | None = None) -> Callable[[type[T]], type[T]]:
-    """Декоратор модели: задаёт имя таблицы и схему, возвращает тот же класс."""
-
-    def decorate(cls: type) -> type:
-        if not issubclass(cls, BaseModel):
-            raise SchemaError(f"{cls.__name__}: @table ожидает pydantic.BaseModel")
-        setattr(cls, "__pikanaut_table__", (name, schema))
-        table_of(cls)  # схема проверяется на импорте, а не на первом запросе
-        return cls
-
-    return decorate
-
-
-def _is_optional(annotation: object) -> bool:
-    return type(None) in get_args(annotation)
+    return (
+        issubclass(model, TableModel)
+        and model.__dict__.get("__pikanaut_table__") is not None
+    )
 
 
 def _contains_typevar(annotation: object) -> bool:
     if isinstance(annotation, TypeVar):
         return True
-    return any(_contains_typevar(arg) for arg in get_args(annotation))
+    return any(_contains_typevar(argument) for argument in get_args(annotation))
 
 
-@_typed_model_cache
-def table_of(model: type[object]) -> TableInfo:
-    """Схема модели (кэшируется по классу)."""
+def _union_args(annotation: object) -> tuple[object, ...]:
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        return get_args(annotation)
+    return (annotation,)
 
-    declared = getattr(model, "__pikanaut_table__", None)
-    if declared is None:
+
+def _remove_generated(annotation: object) -> tuple[object, bool, bool]:
+    arguments = _union_args(annotation)
+    has_generated = Generated in arguments
+    kept = tuple(argument for argument in arguments if argument is not Generated)
+    nullable = type(None) in kept
+    if not kept:
+        raise SchemaError("Generated requires a concrete value type")
+    if len(kept) == 1:
+        normalized = kept[0]
+    else:
+        normalized = kept[0]
+        for argument in kept[1:]:
+            normalized = cast(Any, normalized) | cast(Any, argument)
+    return normalized, nullable, has_generated
+
+
+def _base_annotation(annotation: object) -> object:
+    arguments = tuple(
+        item for item in _union_args(annotation) if item is not type(None)
+    )
+    if len(arguments) != 1:
         raise SchemaError(
-            f'{model.__name__}: not a table — decorate the model with @table("...")'
+            f"unsupported union {annotation!r}; only None and Generated are special"
         )
-    if not issubclass(model, BaseModel):
-        raise SchemaError(f"{model.__name__}: only pydantic.BaseModel is supported")
+    return arguments[0]
 
-    name, schema = declared
+
+def _allowed_values(annotation: object) -> tuple[str | int, ...]:
+    origin = get_origin(annotation)
+    if origin is Literal:
+        values = cast(tuple[object, ...], get_args(annotation))
+    elif isinstance(annotation, type) and issubclass(annotation, Enum):
+        values = tuple(member.value for member in annotation.__members__.values())
+    else:
+        return ()
+    unique = tuple(dict.fromkeys(values))
+    if not unique or any(type(value) not in (str, int) for value in unique):
+        raise SchemaError(
+            "Literal/Enum values must be homogeneous string or integer values"
+        )
+    value_types: set[type[object]] = {type(value) for value in unique}
+    if len(value_types) != 1:
+        raise SchemaError(
+            "Literal/Enum values must be homogeneous string or integer values"
+        )
+    return cast(tuple[str | int, ...], unique)
+
+
+def _infer_kind(
+    annotation: object, spec: ColumnSpec | None
+) -> tuple[str, tuple[str | int, ...]]:
+    concrete = _base_annotation(annotation)
+    allowed = _allowed_values(concrete)
+    if allowed:
+        return ("str" if isinstance(allowed[0], str) else "int"), allowed
+    if spec is not None and spec.kind == "json":
+        return "json", ()
+
+    origin = get_origin(concrete)
+    if origin in (dict, list, tuple):
+        return "json", ()
+    kinds: tuple[tuple[object, str], ...] = (
+        (bool, "bool"),
+        (int, "int"),
+        (float, "float"),
+        (Decimal, "decimal"),
+        (str, "str"),
+        (bytes, "bytes"),
+        (UUID, "uuid"),
+        (datetime, "datetime"),
+        (date, "date"),
+        (time, "time"),
+    )
+    for python_type, kind in kinds:
+        if concrete is python_type:
+            return kind, ()
+    raise SchemaError(f"unsupported column annotation {annotation!r}")
+
+
+def _column_spec(
+    model: type[BaseModel], name: str, field_info: FieldInfo
+) -> ColumnSpec | None:
+    specs = [item for item in field_info.metadata if isinstance(item, ColumnSpec)]
+    if len(specs) > 1:
+        raise SchemaError(f"{model.__name__}.{name}: multiple column declarations")
+    return specs[0] if specs else None
+
+
+_CONSTRAINT_METADATA = (
+    annotated_types.Gt,
+    annotated_types.Ge,
+    annotated_types.Lt,
+    annotated_types.Le,
+    annotated_types.MinLen,
+    annotated_types.MaxLen,
+    annotated_types.Interval,
+)
+
+
+def _check_metadata(model: type[BaseModel], name: str, field_info: FieldInfo) -> None:
+    """Reject Annotated metadata this library cannot translate to DDL.
+
+    Column factory constraints are already reflected in ``ColumnSpec``; other
+    Pydantic constraint objects are allowed for ordinary coercion but unknown
+    metadata would make the declared table semantics ambiguous.
+    """
+
+    for item in field_info.metadata:
+        if isinstance(item, ColumnSpec) or isinstance(item, _CONSTRAINT_METADATA):
+            continue
+        raise SchemaError(
+            f"{model.__name__}.{name}: unsupported annotation metadata {item!r}"
+        )
+
+
+def _check_server_default(
+    model: type[BaseModel], field: Field, has_generated: bool
+) -> None:
+    path = f"{model.__name__}.{field.name}"
+    if field.server_default is not UNSET and not has_generated:
+        raise SchemaError(f"{path}: server_default annotation must include Generated")
+    if field.server_default is UNSET and has_generated:
+        raise SchemaError(f"{path}: Generated is only valid with server_default")
+    if isinstance(field.server_default, Identity) and field.kind != "int":
+        raise SchemaError(f"{path}: Identity requires an integer column")
+    if isinstance(field.server_default, ServerDefault):
+        if field.server_default in (NOW,) and not (
+            field.kind == "datetime" and field.timezone is not False
+        ):
+            raise SchemaError(f"{path}: NOW requires a timezone-aware datetime column")
+        if field.server_default in (TODAY,) and field.kind != "date":
+            raise SchemaError(f"{path}: TODAY requires a date column")
+
+
+@cache
+def table_of(model: type[object]) -> TableInfo:
+    """Return immutable normalized metadata for one concrete table model."""
+
+    if not issubclass(model, TableModel):
+        name = getattr(model, "__name__", repr(model))
+        raise SchemaError(f"{name}: only TableModel subclasses can be tables")
+    if not is_concrete_table(model):
+        raise SchemaError(f"{model.__name__}: not a concrete table; declare table=...")
+    declared = model.__dict__["__pikanaut_table__"]
+    assert declared is not None
+    table_name, schema_name = declared
+
     fields: list[Field] = []
     seen: dict[str, str] = {}
-
     for field_name, field_info in model.model_fields.items():
-        annotation = field_info.annotation
-        if _contains_typevar(annotation):
+        original = field_info.annotation
+        if _contains_typevar(original):
             raise SchemaError(
-                f"{model.__name__}.{field_name}: TypeVar in annotation — generic models "
-                "are not supported, declare a concrete model"
+                f"{model.__name__}.{field_name}: TypeVar is not supported"
             )
-
-        col: Col | None = None
-        skipped = False
-        for meta in field_info.metadata:
-            if isinstance(meta, Col):
-                col = meta
-            elif isinstance(meta, _Skip):
-                skipped = True
-            else:
-                raise SchemaError(
-                    f"{model.__name__}.{field_name}: unknown Annotated metadata {meta!r} — "
-                    "pikanaut understands Col(...) and Skip"
-                )
-        if skipped:
-            continue
-
-        column = col.name if col is not None and col.name is not None else field_name
+        normalized, nullable, has_generated = _remove_generated(original)
+        _check_metadata(model, field_name, field_info)
+        spec = _column_spec(model, field_name, field_info)
+        kind, allowed = _infer_kind(normalized, spec)
+        if spec is not None and spec.kind != kind:
+            raise SchemaError(
+                f"{model.__name__}.{field_name}: {spec.kind.title()}Column does not match {original!r}"
+            )
+        column = spec.name if spec is not None and spec.name is not None else field_name
         if column in seen:
             raise SchemaError(
                 f"{model.__name__}: duplicate column {column!r} "
                 f"(fields {seen[column]!r} and {field_name!r})"
             )
         seen[column] = field_name
-
-        fields.append(
-            Field(
-                name=field_name,
-                column=column,
-                annotation=annotation,
-                required=field_info.is_required(),
-                nullable=_is_optional(annotation),
-                pk=bool(col and col.pk),
-                unique=bool(col and col.unique),
-                index=bool(col and col.index),
-                default=col.default if col is not None else UNSET,
-                sql_type=col.sql_type if col is not None else None,
-            )
+        server_default = (
+            spec.server_default
+            if spec is not None and spec.server_default is not PydanticUndefined
+            else UNSET
         )
+        default = field_info.default
+        if default is PydanticUndefined or default is GENERATED:
+            default = UNSET
+        if default is not UNSET and is_server_descriptor(default):
+            raise SchemaError(
+                f"{model.__name__}.{field_name}: SQL descriptors belong in server_default"
+            )
+        default_factory = field_info.default_factory
+        constraints = spec.constraints if spec is not None else ColumnConstraints()
+        timezone_enabled = (
+            spec.timezone
+            if spec is not None
+            else (True if kind == "datetime" else None)
+        )
+        normalized_field = Field(
+            name=field_name,
+            column=column,
+            annotation=normalized,
+            required=field_info.is_required(),
+            nullable=nullable,
+            pk=bool(spec and spec.pk),
+            unique=bool(spec and spec.unique),
+            index=bool(spec and spec.index),
+            default=default,
+            server_default=server_default,
+            default_factory=default_factory,
+            kind=kind,
+            constraints=constraints,
+            allowed_values=allowed,
+            timezone=timezone_enabled,
+            pydantic_field=field_info,
+        )
+        if normalized_field.pk and normalized_field.nullable:
+            raise SchemaError(
+                f"{model.__name__}.{field_name}: primary key may not be nullable"
+            )
+        _check_server_default(model, normalized_field, has_generated)
+        fields.append(normalized_field)
 
     if not fields:
-        raise SchemaError(f"{model.__name__}: no columns — every field is Skip")
-
-    return TableInfo(model=model, name=name, schema=schema, fields=tuple(fields))
-
-
-class Columns(Generic[M]):
-    """Пространство колонок модели: U.age, U.id, ... От диалекта не зависит."""
-
-    __slots__ = ("model", "info", "_cache")
-
-    def __init__(self, model: type[M]) -> None:
-        self.model = model
-        self.info = table_of(model)
-        self._cache: dict[str, Column[Any]] = {}
-
-    def field(self, name: str) -> Field:
-        return self.info.field(name)
-
-    def __getattr__(self, name: str) -> Column[Any]:
-        # Имена и типы полей динамические, но объект колонки имеет известный API.
-        cache: dict[str, Column[Any]] = object.__getattribute__(self, "_cache")
-        if name in cache:
-            return cache[name]
-        info: TableInfo = object.__getattribute__(self, "info")
-        try:
-            field = info.field(name)
-        except SchemaError as exc:
-            raise AttributeError(name) from exc
-
-        from .expr import Column
-
-        column: Column[Any] = Column(
-            field.column, table=info.pypika_table(), nullable=field.nullable
+        raise SchemaError(
+            f"{model.__name__}: a concrete table must have at least one column"
         )
-        cache[name] = column
-        return column
-
-    def __iter__(self) -> Iterator[Column[Any]]:
-        for field in self.info.fields:
-            yield getattr(self, field.name)
-
-    def __repr__(self) -> str:
-        return f"Columns({self.model.__name__})"
+    return TableInfo(
+        model=model, name=table_name, schema=schema_name, fields=tuple(fields)
+    )
 
 
-@cache
-def columns(model: type[M]) -> Columns[M]:
-    """Получить колонки модели для запросов."""
+def _field_core_schema(model: type[BaseModel], field_name: str) -> CoreSchema:
+    root: CoreSchema = model.__pydantic_core_schema__
+    definitions: list[CoreSchema] = []
+    if root["type"] == "definitions":
+        definitions = cast(list[CoreSchema], root["definitions"])
+        root = cast(CoreSchema, root["schema"])
+    while root["type"] in ("function-before", "function-after", "function-wrap"):
+        root = cast(CoreSchema, cast(dict[str, Any], root)["schema"])
+    if root["type"] != "model":
+        raise SchemaError(f"{model.__name__}: unsupported Pydantic core schema")
+    model_fields = cast(dict[str, Any], root["schema"])["fields"]
+    try:
+        value_schema = cast(CoreSchema, model_fields[field_name]["schema"])
+    except KeyError as exc:
+        raise SchemaError(
+            f"{model.__name__}: field {field_name!r} is not a column"
+        ) from exc
+    if definitions:
+        return core_schema.definitions_schema(value_schema, definitions)
+    return value_schema
 
-    return Columns(model)
+
+def validate_field(model: type[object], field_name: str, value: object) -> object:
+    """Validate one supplied literal without defaults, factories or model validators.
+
+    The isolated Pydantic field core schema retains constraints and autonomous
+    ``field_validator`` callbacks. Validators that require sibling state receive no
+    fabricated row and fail normally; callers should surface that as unsupported.
+    """
+
+    info = table_of(cast(Any, model))
+    info.field(field_name)
+    return SchemaValidator(_field_core_schema(info.model, field_name)).validate_python(
+        value
+    )
+
+
+def serialize_field(field: Field, value: object) -> object:
+    """Prepare a field value for binding, notably JSON via Pydantic JSON mode.
+
+    Query code should call this before dialect adaptation. It never stringifies
+    unknown JSON objects and it preserves top-level ``None`` as SQL NULL.
+    """
+
+    if value is GENERATED:
+        raise PydanticSerializationError(
+            f"{field.name}: GENERATED cannot be serialized"
+        )
+    if field.kind == "json":
+        annotation = field.pydantic_field.annotation
+        if annotation is None:
+            raise SchemaError(f"{field.name}: unresolved JSON annotation")
+        return cast(
+            object,
+            TypeAdapter(annotation).dump_python(value, mode="json", warnings="error"),
+        )
+    if isinstance(value, Enum):
+        return value.value
+    return value
+
+
+__all__ = [
+    "Field",
+    "M",
+    "TableInfo",
+    "TableModel",
+    "UNSET",
+    "is_concrete_table",
+    "serialize_field",
+    "table_of",
+    "validate_field",
+]

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from pydantic_core import to_json
+
 if TYPE_CHECKING:
     from ..build import Binder
 
@@ -29,8 +31,9 @@ class Postgres(Dialect):
     def placeholder(self, index: int) -> str:
         return f"${index}"
 
-    def adapt(self, value: object) -> object:
-        """Драйвер psycopg разбирается с типами сам — библиотека ничего не трогает."""
+    def adapt(self, value: object, *, json: bool = False) -> object:
+        if json:
+            return to_json(value).decode("utf-8")
         return value
 
     def in_list(
@@ -39,9 +42,11 @@ class Postgres(Dialect):
         binder: Binder,
         values: Sequence[object],
         negate: bool = False,
+        *,
+        json: bool = False,
     ) -> str:
         operator = "<> ALL" if negate else "= ANY"
-        return f"{column_sql} {operator}({binder.bind_array(values)})"
+        return f"{column_sql} {operator}({binder.bind_array(values, json=json)})"
 
 
 class PostgresPsycopg(Postgres):

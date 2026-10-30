@@ -9,26 +9,16 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from typing_extensions import assert_type
 
-from pikanaut import Client, client, columns
-from pikanaut.client import (
-    PostgresInsert,
-    PostgresSelect,
-    SQLite34Select,
-    SQLiteInsert,
-    SQLiteSelect,
-)
+from pikanaut import Client, client
 from pikanaut.dialects import POSTGRES, SQLITE, SQLITE_34, Postgres, SQLite, SQLite34
-from tests.models import Note, User
+from tests.generated import notes, users
+from tests.models import Note
 
 db = client(SQLITE)
 pg = client(POSTGRES)
 old = client(SQLITE_34)
-U = columns(User)
-N = columns(Note)
 row = Note(text="x")
 
 # диалект выводится из клиента
@@ -36,17 +26,13 @@ assert_type(db, Client[SQLite])
 assert_type(pg, Client[Postgres])
 assert_type(old, Client[SQLite34])
 
-# клиент возвращает классы запросов своего диалекта
-assert_type(db.select(U.id), SQLiteSelect[Any])
-assert_type(old.select(U.id), SQLite34Select[Any])
-assert_type(pg.select(U.id), PostgresSelect[Any])
-assert_type(db.insert(row), SQLiteInsert)
-assert_type(pg.insert(row), PostgresInsert)
-
-# returning есть там, где диалект его умеет, и отсутствует там, где нет
-db.insert(row).returning(N.id)
-pg.update(User).returning(U.id)
-old.insert(row).returning(N.id)  # type: ignore[attr-defined]
+# generated tables preserve model/source/value compatibility
+db.select(users.id).where(users.age > 18)
+db.insert(notes, row).returning(notes.id)
+pg.update(users).set(age=users.id)
+db.update(users).set(age="wrong")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+db.update(users).set(missing=1)  # type: ignore[call-arg]  # pyright: ignore[reportCallIssue]
+db.insert(users, row)  # type: ignore[misc]  # pyright: ignore[reportArgumentType]
 
 
 # смешивать клиенты разных диалектов нельзя

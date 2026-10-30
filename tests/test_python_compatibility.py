@@ -15,7 +15,8 @@ def test_public_api_imports_in_fresh_interpreter() -> None:
         [
             sys.executable,
             "-c",
-            "from pikanaut import Col, client, columns, ddl, table; "
+            "from pikanaut import (TableModel, IntColumn, StrColumn, Generated, "
+            "GENERATED, Identity, defaults, client, ddl); "
             "from pikanaut.dialects import POSTGRES, POSTGRES_PSYCOPG, SQLITE",
         ],
         capture_output=True,

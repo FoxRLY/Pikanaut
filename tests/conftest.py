@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from pikanaut import client, columns
+from pikanaut import client
 from pikanaut.dialects import POSTGRES, SQLITE, SQLITE_34
-from tests.models import Note, PublicUser, User
+from tests.generated import notes, users
+from tests.generated.public import users as public_users
 
 
 @pytest.fixture
@@ -25,14 +26,14 @@ def old_sqlite():
 
 @pytest.fixture
 def U():
-    return columns(User)
+    return users
 
 
 @pytest.fixture
 def N():
-    return columns(Note)
+    return notes
 
 
 @pytest.fixture
 def P():
-    return columns(PublicUser)
+    return public_users

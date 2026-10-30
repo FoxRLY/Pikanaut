@@ -58,7 +58,7 @@ class Dialect:
     def placeholder(self, index: int) -> str:
         raise NotImplementedError
 
-    def adapt(self, value: object) -> object:
+    def adapt(self, value: object, *, json: bool = False) -> object:
         raise NotImplementedError
 
     def in_list(
@@ -67,9 +67,11 @@ class Dialect:
         binder: Binder,
         values: Sequence[object],
         negate: bool = False,
+        *,
+        json: bool = False,
     ) -> str:
-        """``IN (?,?,?)`` по умолчанию; диалекты с массивами переопределяют."""
-        marks = ",".join(binder.bind(value) for value in values)
+        """``IN (?,?,?)`` by default; array dialects may override it."""
+        marks = ",".join(binder.bind(value, json=json) for value in values)
         operator = "NOT IN" if negate else "IN"
         return f"{column_sql} {operator} ({marks})"
 

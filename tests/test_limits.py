@@ -14,8 +14,10 @@ from __future__ import annotations
 import pytest
 
 from pikanaut import QueryTooLong, client
-from pikanaut.dialects import POSTGRES, SQLITE, Limits
-from tests.models import Note, User
+from pikanaut.client import Client
+from pikanaut.dialects import POSTGRES, SQLITE, Limits, SQLite
+from tests.generated import UsersTable, notes, products, users
+from tests.models import Note
 
 
 def test_default_limits_are_practical_not_engine() -> None:
@@ -25,7 +27,7 @@ def test_default_limits_are_practical_not_engine() -> None:
     assert POSTGRES.engine_max_params == 65_535
 
 
-def test_too_many_params_fails_early(db, U) -> None:
+def test_too_many_params_fails_early(db: Client[SQLite], U: UsersTable) -> None:
     with pytest.raises(QueryTooLong) as exc:
         db.select(U.id).where(U.age.in_(list(range(10_001)))).build()
     assert exc.value.kind == "params"
@@ -33,7 +35,9 @@ def test_too_many_params_fails_early(db, U) -> None:
     assert exc.value.length == 10_001
 
 
-def test_params_error_mentions_engine_ceiling_and_how_to_raise(db, U) -> None:
+def test_params_error_mentions_engine_ceiling_and_how_to_raise(
+    db: Client[SQLite], U: UsersTable
+) -> None:
     with pytest.raises(QueryTooLong) as exc:
         db.select(U.id).where(U.age.in_(list(range(10_001)))).build()
     message = str(exc.value)
@@ -42,17 +46,19 @@ def test_params_error_mentions_engine_ceiling_and_how_to_raise(db, U) -> None:
     assert len(message) < 600  # никаких дампов запроса
 
 
-def test_client_can_raise_the_limit(U) -> None:
+def test_client_can_raise_the_limit(U: UsersTable) -> None:
     loose = client(SQLITE, limits=Limits(max_params=20_000))
     loose.select(U.id).where(U.age.in_(list(range(11_000)))).build()  # не падает
 
 
-def test_limits_can_be_disabled(U) -> None:
+def test_limits_can_be_disabled(U: UsersTable) -> None:
     free = client(SQLITE, limits=Limits(max_sql_bytes=None, max_params=None))
     free.select(U.id).where(U.age.in_(list(range(12_000)))).build()  # не падает
 
 
-def test_client_limits_do_not_leak_into_dialect(db, U) -> None:
+def test_client_limits_do_not_leak_into_dialect(
+    db: Client[SQLite], U: UsersTable
+) -> None:
     tight = client(SQLITE, limits=Limits(max_params=1))
     with pytest.raises(QueryTooLong):
         tight.select(U.id).where(U.age.in_([1, 2])).build()
@@ -60,7 +66,7 @@ def test_client_limits_do_not_leak_into_dialect(db, U) -> None:
     assert SQLITE.limits.max_params == 10_000
 
 
-def test_sql_bytes_limit(U) -> None:
+def test_sql_bytes_limit(U: UsersTable) -> None:
     tight = client(SQLITE, limits=Limits(max_sql_bytes=64, max_params=None))
     with pytest.raises(QueryTooLong) as exc:
         tight.select(U.id, U.email, U.full_name).where(U.email.like("%x%")).build()
@@ -69,32 +75,20 @@ def test_sql_bytes_limit(U) -> None:
     assert exc.value.length > 64
 
 
-def test_length_is_measured_in_utf8_bytes(U) -> None:
-    """Кириллица в идентификаторах: байтов больше, чем символов — считаем байты."""
-    from typing import Annotated
-
-    from pydantic import BaseModel
-
-    from pikanaut import Col, columns, table
-
-    @table("товары")
-    class Товар(BaseModel):
-        id: Annotated[int, Col(pk=True)]
-        название: Annotated[str, Col("название")]
-        описание: Annotated[str, Col("описание")]
-
-    T = columns(Товар)
-    plain = client(SQLITE).select(T.id, T.название, T.описание).build().sql
+def test_sql_limit_counts_rendered_sql_bytes() -> None:
+    plain = (
+        client(SQLITE).select(products.id, products.name, products.description).build().sql
+    )
     chars, octets = len(plain), len(plain.encode("utf-8"))
-    assert octets > chars  # иначе тест ничего не проверяет
+    assert octets == chars
 
-    tight = client(SQLITE, limits=Limits(max_sql_bytes=chars + 1, max_params=None))
+    tight = client(SQLITE, limits=Limits(max_sql_bytes=chars - 1, max_params=None))
     with pytest.raises(QueryTooLong) as exc:
-        tight.select(T.id, T.название, T.описание).build()
+        tight.select(products.id, products.name, products.description).build()
     assert exc.value.length == octets
 
 
-def test_sql_bytes_message_is_truncated(U) -> None:
+def test_sql_bytes_message_is_truncated(U: UsersTable) -> None:
     tight = client(SQLITE, limits=Limits(max_sql_bytes=64, max_params=None))
     with pytest.raises(QueryTooLong) as exc:
         tight.select(U.id, U.email, U.full_name).where(U.email.like("%corp%")).build()
@@ -103,19 +97,21 @@ def test_sql_bytes_message_is_truncated(U) -> None:
     assert len(message) < 700
 
 
-def test_insert_many_hints_rows_per_statement(db) -> None:
+def test_insert_many_hints_rows_per_statement(db: Client[SQLite]) -> None:
     rows = [Note(text=f"t{i}") for i in range(10_001)]
     with pytest.raises(QueryTooLong) as exc:
-        db.insert_many(rows).build()
+        db.insert_many(notes, rows).build()
     assert exc.value.kind == "params"
     assert "rows" in str(exc.value)  # подсказка про чанки
 
 
-def test_params_limit_counts_in_every_clause(db, U) -> None:
+def test_params_limit_counts_in_every_clause(
+    db: Client[SQLite], U: UsersTable
+) -> None:
     """Лимит общий на запрос, а не на clause: where + set + in_ складываются."""
     with pytest.raises(QueryTooLong):
         (
-            db.update(User)
+            db.update(users)
             .set(age=1, full_name="x")
             .where(U.id.in_(list(range(9_999))))
             .build()

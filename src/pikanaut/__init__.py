@@ -6,14 +6,17 @@
 
 from __future__ import annotations
 
+from . import defaults
 from .build import Sql
 from .client import Client, client
+from .defaults import GENERATED, Generated, Identity
 from .errors import (
     PikanautError,
     QueryError,
     QueryTooLong,
     SchemaError,
     UnsupportedFeature,
+    UnsupportedOperation,
 )
 from .expr import (
     Column,
@@ -31,27 +34,55 @@ from .expr import (
     sum,
     upper,
 )
-from .schema import Col, Columns, Skip, columns, table
+from .fields import (
+    BoolColumn,
+    BytesColumn,
+    DateColumn,
+    DateTimeColumn,
+    DecimalColumn,
+    FloatColumn,
+    IntColumn,
+    JsonColumn,
+    StrColumn,
+    TimeColumn,
+    UuidColumn,
+)
+from .schema import TableModel
+from .tables import Table
 
 __all__ = [
+    "BoolColumn",
+    "BytesColumn",
     "Client",
-    "Col",
     "Column",
-    "Columns",
     "Cond",
+    "DateColumn",
+    "DateTimeColumn",
+    "DecimalColumn",
+    "FloatColumn",
+    "GENERATED",
+    "Generated",
+    "Identity",
+    "IntColumn",
+    "JsonColumn",
     "PikanautError",
     "QueryError",
     "QueryTooLong",
     "SchemaError",
-    "Skip",
     "Sql",
+    "StrColumn",
+    "Table",
+    "TableModel",
+    "TimeColumn",
     "UnsupportedFeature",
+    "UnsupportedOperation",
+    "UuidColumn",
     "and_",
     "avg",
     "coalesce",
     "client",
-    "columns",
     "count",
+    "defaults",
     "lower",
     "max",
     "min",
@@ -60,5 +91,4 @@ __all__ = [
     "raw",
     "sum",
     "upper",
-    "table",
 ]

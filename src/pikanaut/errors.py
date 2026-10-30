@@ -10,11 +10,11 @@ class PikanautError(Exception):
 
 
 class SchemaError(PikanautError):
-    """Модель нельзя превратить в таблицу: дубли колонок, TypeVar, все поля Skip и т.п."""
+    """A model cannot be treated as a table: invalid columns, annotations or names."""
 
 
 class UnsupportedFeature(PikanautError):
-    """Диалект не поддерживает запрошенную возможность."""
+    """The selected dialect cannot provide a requested feature."""
 
     def __init__(self, dialect: str, feature: str, hint: str = "") -> None:
         self.dialect = dialect
@@ -24,6 +24,10 @@ class UnsupportedFeature(PikanautError):
         if hint:
             message = f"{message} — {hint}"
         super().__init__(message)
+
+
+class UnsupportedOperation(UnsupportedFeature):
+    """A value operation is unsafe or unavailable in the selected dialect."""
 
 
 class QueryError(PikanautError):
@@ -59,5 +63,8 @@ class QueryTooLong(QueryError):
 
 
 def describe(value: Any) -> str:
-    """Короткое описание значения для текста ошибки (модель, колонка, тип)."""
-    raise NotImplementedError
+    """Short value description for error messages (model, column, type)."""
+    name = getattr(value, "__name__", None)
+    if isinstance(name, str):
+        return name
+    return type(value).__name__

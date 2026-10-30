@@ -21,7 +21,7 @@ def test_ne_none_on_nullable_column_is_is_not_null(db, U) -> None:
 
 def test_eq_none_on_not_null_column_raises(U) -> None:
     with pytest.raises(TypeError, match="is_null"):
-        U.email == None  # noqa: E711
+        _ = U.email == None  # noqa: E711
 
 
 def test_is_null_always_allowed(U) -> None:
